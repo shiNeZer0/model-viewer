@@ -13,6 +13,7 @@ import {
   PerspectiveCamera,
   Scene,
   Sphere,
+  Vector3,
   WebGLRenderer,
 } from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
@@ -20,6 +21,7 @@ import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js'
 
 import { disposeObject3D } from './disposal.js'
 import { DEFAULT_IDLE_MS, createIdlePolicy, hasContinuousWork } from './idlePolicy.js'
+import { ModelPlacement } from './modelPlacement.js'
 import { PostFx, normalizePostFxSettings } from './postfx.js'
 import { createRenderLoop } from './renderLoop.js'
 import { DEFAULT_SHADE_MODE, ShadeController } from './shadeModes.js'
@@ -45,6 +47,8 @@ export class ViewerEngine {
 
     this.currentRoot = null
     this.shadeController = null
+    /** 当前模型的摆放控制器（居中/贴地），随模型切换而重建 */
+    this.placement = null
     this.lastDisposal = null
     this.lastBox = null
     this.lastPresetId = DEFAULT_VIEW_PRESET
@@ -69,6 +73,9 @@ export class ViewerEngine {
       // 默认显示坐标轴、不显示网格（对齐 M0 观感）
       showGrid: options.showGrid ?? false,
       showAxes: options.showAxes ?? true,
+      // 模型摆放：默认居中到世界原点并把底部贴到地面
+      centerModel: options.centerModel ?? true,
+      alignToGround: options.alignToGround ?? true,
       toneMapping: postFxSettings.toneMapping,
       exposure: postFxSettings.exposure,
       saturation: postFxSettings.saturation,
@@ -312,11 +319,21 @@ export class ViewerEngine {
    * @returns {string[]} 需要展示给用户的提示（例如线框被跳过）
    */
   applyDisplaySettings(partial = {}) {
-    this.display = { ...this.display, ...partial }
+    const previous = this.display
+    this.display = { ...previous, ...partial }
     const warnings = []
 
     if (this.shadeController && this.display.shadingMode !== this.shadeController.currentMode) {
       warnings.push(...this.shadeController.apply(this.display.shadingMode))
+    }
+
+    // 摆放设置变化 → 重新归一化（网格与相机一并刷新）
+    if (
+      this.currentRoot &&
+      (this.display.centerModel !== previous.centerModel ||
+        this.display.alignToGround !== previous.alignToGround)
+    ) {
+      this.reapplyPlacement()
     }
 
     this.stage.setBackground({
@@ -364,14 +381,21 @@ export class ViewerEngine {
 
     if (this.currentRoot) {
       this.scene.add(this.currentRoot)
+      this.placement = new ModelPlacement(this.currentRoot)
       this.shadeController = new ShadeController(this.currentRoot)
       shadeWarnings = this.shadeController.apply(this.display.shadingMode)
 
-      this.lastBox = new Box3().setFromObject(this.currentRoot)
+      // 归一化摆放（居中 + 贴地），再按摆放后的包围盒调整网格尺度与相机
+      this.lastBox =
+        this.placement.apply({
+          center: this.display.centerModel,
+          ground: this.display.alignToGround,
+        }) ?? new Box3().setFromObject(this.currentRoot)
       this.stage.fitToBox(this.lastBox)
-      if (fit) fitResult = this.fitToObject(this.currentRoot, { presetId })
+      if (fit) fitResult = this.fitToObject(this.currentRoot, { presetId, box: this.lastBox })
     } else {
       this.lastBox = null
+      this.placement = null
     }
 
     this.noteActivity()
@@ -385,14 +409,15 @@ export class ViewerEngine {
   /**
    * 把相机拉到能完整看到对象的距离，并按预设方向摆放。
    * 距离按包围球半径与视角计算（取水平/垂直中较小者），padding 留出边距。
+   * @param {object} [options.box] 已知的包围盒（避免重复计算）
    */
-  fitToObject(object = this.currentRoot, { padding = 1.25, presetId } = {}) {
+  fitToObject(object = this.currentRoot, { padding = 1.25, presetId, box = null } = {}) {
     if (!object) return null
 
-    const box = new Box3().setFromObject(object)
-    if (box.isEmpty()) return null
+    const targetBox = box ?? new Box3().setFromObject(object)
+    if (targetBox.isEmpty()) return null
 
-    const sphere = box.getBoundingSphere(new Sphere())
+    const sphere = targetBox.getBoundingSphere(new Sphere())
     const placement = computeCameraPlacement({
       center: sphere.center,
       radius: Math.max(sphere.radius, 1e-6),
@@ -410,7 +435,7 @@ export class ViewerEngine {
     this.controls.target.copy(sphere.center)
     this.controls.update()
 
-    this.lastBox = box
+    this.lastBox = targetBox
     this.lastPresetId = placement.presetId
     this.noteActivity()
 
@@ -420,6 +445,37 @@ export class ViewerEngine {
   /** 切到某个标准视图（前/后/左/右/上/下/等轴测） */
   setViewPreset(presetId) {
     return this.fitToObject(this.currentRoot, { presetId })
+  }
+
+  /**
+   * 重新执行模型摆放归一化（用户切换"居中/贴地"开关时调用），
+   * 因为摆放变了，网格尺度与相机也要跟着重算。
+   */
+  reapplyPlacement() {
+    if (!this.currentRoot || !this.placement) return null
+
+    const box = this.placement.apply({
+      center: this.display.centerModel,
+      ground: this.display.alignToGround,
+    })
+    if (!box) return null
+
+    this.lastBox = box
+    this.stage.fitToBox(box)
+    this.fitToObject(this.currentRoot, { presetId: this.lastPresetId, box })
+    return box
+  }
+
+  /** 当前模型摆放后的包围盒（尺寸面板 / 边界框标注使用） */
+  getModelBounds() {
+    if (!this.lastBox || this.lastBox.isEmpty()) return null
+    return {
+      box: this.lastBox.clone(),
+      size: this.lastBox.getSize(new Vector3()),
+      center: this.lastBox.getCenter(new Vector3()),
+      min: this.lastBox.min.clone(),
+      max: this.lastBox.max.clone(),
+    }
   }
 
   /** 重置视图：回到等轴测并重新适配 */

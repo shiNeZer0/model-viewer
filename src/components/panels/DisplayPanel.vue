@@ -73,6 +73,31 @@
       </el-form-item>
     </el-form>
 
+    <el-divider content-position="left">模型放置</el-divider>
+
+    <el-form label-width="88px" label-position="left" size="small">
+      <el-form-item label="居中到原点">
+        <el-switch
+          :model-value="display.centerModel"
+          @update:model-value="display.update('centerModel', $event)"
+        />
+        <span class="display-panel__hint">把模型 X/Z 移到世界原点</span>
+      </el-form-item>
+
+      <el-form-item label="底部贴地">
+        <el-switch
+          :model-value="display.alignToGround"
+          @update:model-value="display.update('alignToGround', $event)"
+        />
+        <span class="display-panel__hint">把模型最低点落到 y=0 地面</span>
+      </el-form-item>
+    </el-form>
+
+    <p class="display-panel__footnote">
+      摆放只是显示用的归一化：仅移动模型在场景中的位置，不会修改模型文件里的原始坐标。
+      关掉开关即可查看模型自带的真实坐标。
+    </p>
+
     <el-divider content-position="left">光照与色调（M3 会扩展为完整光照系统）</el-divider>
 
     <el-form label-width="88px" label-position="left" size="small">
@@ -168,6 +193,13 @@ async function resetDisplay() {
 .display-panel__hint {
   margin-left: 8px;
   font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.display-panel__footnote {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
   color: var(--el-text-color-secondary);
 }
 </style>

@@ -29,6 +29,8 @@ const SETTING_KEYS = {
   gradientBottom: 'display.gradientBottom',
   showGrid: 'display.showGrid',
   showAxes: 'display.showAxes',
+  centerModel: 'display.centerModel',
+  alignToGround: 'display.alignToGround',
   toneMapping: 'display.toneMapping',
   exposure: 'display.exposure',
   saturation: 'display.saturation',
@@ -50,6 +52,10 @@ export const useDisplayStore = defineStore('display', () => {
   const gradientBottom = ref(DEFAULT_GRADIENT_BOTTOM)
   const showGrid = ref(false)
   const showAxes = ref(true)
+  /** 模型摆放：加载后居中到世界原点（X/Z） */
+  const centerModel = ref(true)
+  /** 模型摆放：底部对齐地面（y=0） */
+  const alignToGround = ref(true)
 
   const toneMapping = ref(normalizePostFxSettings().toneMapping)
   const exposure = ref(1)
@@ -72,6 +78,8 @@ export const useDisplayStore = defineStore('display', () => {
     gradientBottom: gradientBottom.value,
     showGrid: showGrid.value,
     showAxes: showAxes.value,
+    centerModel: centerModel.value,
+    alignToGround: alignToGround.value,
     toneMapping: toneMapping.value,
     exposure: exposure.value,
     saturation: saturation.value,
@@ -98,6 +106,12 @@ export const useDisplayStore = defineStore('display', () => {
       }
       if (typeof saved[SETTING_KEYS.showAxes] === 'boolean') {
         showAxes.value = saved[SETTING_KEYS.showAxes]
+      }
+      if (typeof saved[SETTING_KEYS.centerModel] === 'boolean') {
+        centerModel.value = saved[SETTING_KEYS.centerModel]
+      }
+      if (typeof saved[SETTING_KEYS.alignToGround] === 'boolean') {
+        alignToGround.value = saved[SETTING_KEYS.alignToGround]
       }
 
       const postFx = normalizePostFxSettings({
@@ -164,6 +178,12 @@ export const useDisplayStore = defineStore('display', () => {
       case 'showAxes':
         showAxes.value = Boolean(value)
         break
+      case 'centerModel':
+        centerModel.value = Boolean(value)
+        break
+      case 'alignToGround':
+        alignToGround.value = Boolean(value)
+        break
       case 'toneMapping':
         toneMapping.value = normalizePostFxSettings({ toneMapping: value }).toneMapping
         break
@@ -198,6 +218,8 @@ export const useDisplayStore = defineStore('display', () => {
     gradientBottom.value = DEFAULT_GRADIENT_BOTTOM
     showGrid.value = false
     showAxes.value = true
+    centerModel.value = true
+    alignToGround.value = true
     toneMapping.value = normalizePostFxSettings().toneMapping
     exposure.value = 1
     saturation.value = DEFAULT_SATURATION
@@ -214,6 +236,8 @@ export const useDisplayStore = defineStore('display', () => {
     gradientBottom,
     showGrid,
     showAxes,
+    centerModel,
+    alignToGround,
     toneMapping,
     exposure,
     saturation,

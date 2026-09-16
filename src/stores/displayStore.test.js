@@ -71,6 +71,30 @@ describe('displayStore 快照', () => {
     expect(display.toEngineSettings.backgroundColor).toMatch(/^#[0-9a-f]{6}$/i)
   })
 
+  it('模型摆放开关默认开启，可单独关闭', async () => {
+    const display = useDisplayStore()
+    expect(display.toEngineSettings.centerModel).toBe(true)
+    expect(display.toEngineSettings.alignToGround).toBe(true)
+
+    await display.update('centerModel', false, { persist: false })
+    expect(display.toEngineSettings.centerModel).toBe(false)
+    expect(display.toEngineSettings.alignToGround).toBe(true)
+
+    await display.update('alignToGround', false, { persist: false })
+    expect(display.toEngineSettings.alignToGround).toBe(false)
+  })
+
+  it('摆放开关变化同样会让快照变化（引擎据此重新归一化并重算相机）', async () => {
+    const display = useDisplayStore()
+    const seen = []
+    const snapshot = computed(() => display.toEngineSettings)
+    watch(snapshot, (value) => seen.push([value.centerModel, value.alignToGround]))
+
+    await display.update('alignToGround', false, { persist: false })
+    await nextTick()
+    expect(seen).toEqual([[true, false]])
+  })
+
   it('setNotes 去重并过滤空值', () => {
     const display = useDisplayStore()
     display.setNotes(['a', 'a', '', null, undefined, 'b'])
