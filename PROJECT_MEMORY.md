@@ -100,3 +100,14 @@
 1) **抽取算法模块会立刻暴露调用点替你掩盖的缺陷**：computeViewDistance 里 `(fovDeg * Math.PI) / 180`，当 fovDeg 为 undefined/NaN 时整条链路算出 NaN 相机坐标（表现为模型"消失"）。M0 里调用点永远传 camera.fov，所以线上看不出问题；把它抽成可复用模块后第一次跑单测就红了。结论：涉及相机/几何的公式函数，一律在函数内部校验参数合法区间并给兜底值（本例 0<fov<180，否则回退 50°），别把校验责任推给调用方。
 
 2) **断言子串要选"只可能由该逻辑产生"的文案**：验证「有 UV 时不报警」时写了 `expect(warnings.some(w => w.includes('UV'))).toBe(false)`，结果被另一条完全无关的提示「当前环境无法创建 Canvas 纹理，UV 棋盘格不可用」命中而假失败。教训：断言提示文案时用最能标识该分支的完整短语（如「没有 UV 坐标」），否则任何包含同一关键词的其他提示都会污染断言——包括环境相关的降级提示（Node 无 DOM/Canvas 就属于这一类）。
+- [2026-09-16 17:39] [经验教训] rAF 循环致死双重陷阱：绑定顺序 + 僵尸句柄（现象仅"画布全黑"）；用独有产物判断用户跑的是哪个形态 — 「requestAnimationFrame 循环」的两个经典致死陷阱（model-viewer M1 实测，用户报"不显示模型"，控制台仅一行 `Cannot read properties of undefined (reading 'tick')`）：
+
+1) **绑定顺序**：构造函数里 `this.tick = this.tick.bind(this)` 放在末尾，而构造函数中途的 `handleResize() → noteActivity() → start()` 已经把**未绑定**的 tick 交给 rAF（`requestAnimationFrame(this.tick)` 读的是原型方法、没有 this）。回调执行时 this 为 undefined 直接抛错。M0 之所以没事：那时 handleResize 末尾没有 noteActivity（空闲停渲染是 M1 才加的）。
+
+2) **僵尸句柄（更隐蔽、后果更严重）**：旧实现是"先排下一帧再干活"（`tick(){ this.frameHandle = requestAnimationFrame(this.tick); ... }`），异常发生在第一行 → frameHandle 从未被更新，却停在一个已失效的非 null 值上；而 `start()` 用 `if (this.frameHandle !== null) return` 做幂等 → **此后所有 start() 全部直接返回，循环永久死亡**。界面表现是"有界面、模型区域全黑"，而模型其实已加载成功（状态栏有三角面数），极难从现象反推原因。
+
+**结构化修法**（已落地 src/core/three/renderLoop.js + 5 个单测）：调度器只持有闭包（`onFrame: () => this.onFrame()`，不依赖 this 绑定时机），并且**先清空句柄再执行回调**——这样回调无论怎么抛错都不会留下 running 的假象；每帧由 onFrame 的返回值决定是否继续排帧（空闲就不排，rAF 自然归零）。单测专门锁住"回调抛错后 loop.running === false 且可重新 start"。
+
+经验：任何"自己排下一帧"的循环，都要(a)不依赖 this 绑定、(b)保证异常路径下句柄状态一致、(c)用可注入的 requestFrame/cancelFrame 把调度器抽出来单测——这类 bug 在浏览器里只以"画面不动"的形式出现，没有测试就只能靠用户报障。
+
+附带两条排障经验：① 判断用户实际跑的是哪个形态，最快的方法是看该形态独有的产物——Tauri 的 `~/.model-viewer/app/app.log` 与数据目录不存在，就直接证明"桌面版从未启动"，问题必然在 Web 路径；② 我在用户开着 dev server 时改文件，HMR 会先应用模板再应用脚本，导致控制台出现"属性未定义"的**中间态假警告**（本次 `onRenderError` 那条即属此类），让用户复测前先强刷页面可排除这类噪声。

@@ -57,19 +57,19 @@
         </el-form-item>
       </template>
 
-      <el-form-item label="辅助显示">
-        <el-checkbox
+      <el-form-item label="坐标轴">
+        <el-switch
           :model-value="display.showAxes"
           @update:model-value="display.update('showAxes', $event)"
-        >
-          坐标轴
-        </el-checkbox>
-        <el-checkbox
+        />
+      </el-form-item>
+
+      <el-form-item label="地面网格">
+        <el-switch
           :model-value="display.showGrid"
           @update:model-value="display.update('showGrid', $event)"
-        >
-          地面网格
-        </el-checkbox>
+        />
+        <span class="display-panel__hint">网格尺寸会随模型大小自动缩放</span>
       </el-form-item>
     </el-form>
 
