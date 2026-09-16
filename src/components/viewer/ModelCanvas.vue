@@ -11,7 +11,7 @@ import { useViewerEngine } from '../../composables/useViewerEngine.js'
 import { useDisplayStore } from '../../stores/displayStore.js'
 import { useSettingsStore } from '../../stores/settingsStore.js'
 
-const emit = defineEmits(['ready', 'context-lost', 'fps'])
+const emit = defineEmits(['ready', 'context-lost', 'fps', 'render-error'])
 
 const containerRef = ref(null)
 const settings = useSettingsStore()
@@ -30,16 +30,28 @@ function applyDisplaySettings() {
 }
 
 onMounted(() => {
-  const created = mount(containerRef.value, {
-    maxPixelRatio: settings.maxPixelRatio,
-    idleMs: display.idleMs,
-    onFps: (fps) => emit('fps', fps),
-    onContextLost: () => emit('context-lost'),
-  })
-  created.setAutoRotate(settings.autoRotate, settings.autoRotateSpeed)
-  const warnings = created.applyDisplaySettings(engineSettings.value)
-  display.setNotes(warnings)
-  emit('ready', created)
+  try {
+    const created = mount(containerRef.value, {
+      maxPixelRatio: settings.maxPixelRatio,
+      idleMs: display.idleMs,
+      onFps: (fps) => emit('fps', fps),
+      onContextLost: () => emit('context-lost'),
+      // 渲染异常若不冒到 UI，现象就是「画布全黑但界面正常」，必须显式上报
+      onRenderError: (info) => emit('render-error', info),
+    })
+    created.setAutoRotate(settings.autoRotate, settings.autoRotateSpeed)
+    const warnings = created.applyDisplaySettings(engineSettings.value)
+    display.setNotes(warnings)
+    emit('ready', created)
+  } catch (error) {
+    // 引擎构造失败（例如 WebGL 不可用）同样不能让用户只看到一块黑画布
+    console.error('[ModelCanvas] 渲染引擎初始化失败', error)
+    emit('render-error', {
+      message: error?.message ?? String(error),
+      hint: '渲染引擎初始化失败，请检查浏览器/WebView2 的 WebGL 支持',
+      level: 'init-failed',
+    })
+  }
 })
 
 onBeforeUnmount(() => unmount())

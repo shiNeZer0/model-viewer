@@ -43,6 +43,19 @@
 4) git 初始化：git init -b main + 首次提交 4eda0ff「feat(viewer): M0 骨架（Tauri 2 + Vue 3 + Three.js，Web/桌面双端）」，90 个文件，工作区干净。首次 add 时发现 .pnpm-store（pnpm 11 在项目根自建的本地包缓存，1.2 万文件）被裹进暂存区，已 git reset 后加入 .gitignore；同时新增 .gitattributes（* text=auto + png/ico/icns/wasm/字体等二进制标记，消除 autocrlf 的 LF→CRLF 噪声）；.gitignore 另外补了 src-tauri/gen/schemas（tauri-build 生成）。README.md 从模板文案重写为真实项目说明（双端形态、命令、结构、已实现/计划中、已知限制）。
 
 回归：cargo test 24/24、vitest 61/61、pnpm build 与 pnpm build:web 均成功。
+- [2026-09-16 17:17] [工作记录] model-viewer M1 完成：视图预设/8 种着色/背景与坐标轴/后处理/空闲停渲染（107 测试全绿） — E:\AI-Coding\model-viewer 的 M1 里程碑（相机与显示模式）已实施并提交（commit c493999，22 文件 +2448/-68，工作区干净）。
+
+【新增纯逻辑模块（均带单测）】
+- src/core/three/viewPresets.js：7 个标准视图（前/后/左/右/顶/底/等轴测）+ normalizeDirection + computeViewDistance + computeCameraPlacement。顶/底视图方向刻意带 0.0001 的 Z 偏移，避免与 up 平行导致 OrbitControls 万向锁。
+- src/core/three/shadeModes.js：SHADE_MODES 共 8 种（实体/黏土/平面着色/实体+线框/仅线框/顶点色/法线/UV 棋盘格）+ ShadeController。核心约束=只换材质引用不改几何，切回时原始材质 100% 还原；记录原始 visible 状态（模型自带隐藏节点不会被切模式暴露）；线框双阈值（WIREFRAME_TRIANGLE_LIMIT=30 万 → EdgesGeometry(30°) 结构边；HARD_LIMIT=200 万 → 跳过并提示）；线框挂在 mesh 父节点并复制其局部矩阵（这样「仅线框」隐藏 mesh 时线仍在）；flat 模式克隆材质后设 flatShading，克隆材质放 transientMaterials 集合统一 dispose。
+- src/core/three/postfx.js：TONE_MAPPINGS（none/linear/aces/agx/neutral，默认 neutral）+ clamp + normalizePostFxSettings + SaturationShader（Rec.709 亮度 mix）+ PostFx 类（惰性创建 EffectComposer；自建 HalfFloatType+samples=4 的 MSAA render target；双路径 render：开启走 composer，关闭走 renderer.render）。
+- src/core/three/idlePolicy.js：createIdlePolicy（noteActivity/shouldRender/goIdle/setIdleMs）+ hasContinuousWork。
+
+【其他】src/core/three/stage.js（背景纯色/渐变/真透明棋盘 + niceGridSize 自适应网格 + CSS2D 坐标轴标签）、ViewerEngine 整合（applyDisplaySettings/setViewPreset/resetView/renderNow/setAnimationPlaying；rAF 循环按「相机变化 ∪ 持续工作 ∪ 空闲窗口」决定渲染，空闲时彻底 stop()）、src/stores/displayStore.js（12 个显示设置持久化到 viewer_settings）、DisplayPanel.vue、useHotkeys.js（1-7/F/R/T/W，抽 isTypingTarget/resolveHotkey 为纯函数）、工具栏视图与着色下拉、ModelCanvas 增加透明棋盘 CSS。
+
+【测试暴露的真实缺陷】computeViewDistance 在 fovDeg 缺省/NaN 时算出 NaN 相机坐标（undefined*Math.PI）；M0 调用点总传 camera.fov 所以没暴露，抽成模块后立刻被单测抓到。已加 0<fov<180 校验与回退 50°，并补回归用例。
+
+【验证】pnpm test 107/107（12 文件）、pnpm build 成功、cargo test 24/24。GUI 级验收（8 种着色切换与还原、6 视图方向、背景、饱和度曝光、静止 5 秒后 CPU 归零）需用户在本机 pnpm tauri dev 确认。
 
 ## 经验教训 Lessons Learned
 
@@ -82,3 +95,8 @@
 3) 迁移 SQL 的离线自验很划算：直接用 sqlite3 CLI 把 migrations/*.sql 依次灌进一个放在 target/（已忽略）下的 scratch 库，再断言 sqlite_master 里的表集合与残留表计数。不需要启动 GUI 就能证明 append-only 迁移链在全新库上可执行。
 
 4) **用 `git grep` 做“资源是否被引用”的判定时，必须收敛扫描面**：dsh-memoir 会把文件名写进 PROJECT_MEMORY.md（记忆笔记正文里提到 `dclaw.png`/`icons.svg`），导致 `git grep -E "dclaw|icons\.svg"` 命中自己的笔记而被误判为“仍被引用”。正确做法是限定引用载体类型并排除记忆文件：`git grep -n -I -E "<pattern>" -- "*.html" "*.vue" "*.js" "*.ts" "*.json" "*.css" "*.md" ":!PROJECT_MEMORY.md"`。另注意 PROJECT_MEMORY.md 由 memoir 自动改写，会周期性显示为已修改（M），属正常现象。
+- [2026-09-16 17:17] [经验教训] 抽模块+单测立刻暴露被调用点掩盖的 NaN 缺陷；断言提示文案要选唯一子串 — 两点与「把算法抽成纯模块 + 单测」直接相关的经验（model-viewer M1 实测）：
+
+1) **抽取算法模块会立刻暴露调用点替你掩盖的缺陷**：computeViewDistance 里 `(fovDeg * Math.PI) / 180`，当 fovDeg 为 undefined/NaN 时整条链路算出 NaN 相机坐标（表现为模型"消失"）。M0 里调用点永远传 camera.fov，所以线上看不出问题；把它抽成可复用模块后第一次跑单测就红了。结论：涉及相机/几何的公式函数，一律在函数内部校验参数合法区间并给兜底值（本例 0<fov<180，否则回退 50°），别把校验责任推给调用方。
+
+2) **断言子串要选"只可能由该逻辑产生"的文案**：验证「有 UV 时不报警」时写了 `expect(warnings.some(w => w.includes('UV'))).toBe(false)`，结果被另一条完全无关的提示「当前环境无法创建 Canvas 纹理，UV 棋盘格不可用」命中而假失败。教训：断言提示文案时用最能标识该分支的完整短语（如「没有 UV 坐标」），否则任何包含同一关键词的其他提示都会污染断言——包括环境相关的降级提示（Node 无 DOM/Canvas 就属于这一类）。

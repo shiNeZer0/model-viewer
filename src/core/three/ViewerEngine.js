@@ -21,6 +21,7 @@ import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js'
 import { disposeObject3D } from './disposal.js'
 import { DEFAULT_IDLE_MS, createIdlePolicy, hasContinuousWork } from './idlePolicy.js'
 import { PostFx, normalizePostFxSettings } from './postfx.js'
+import { createRenderLoop } from './renderLoop.js'
 import { DEFAULT_SHADE_MODE, ShadeController } from './shadeModes.js'
 import {
   DEFAULT_BACKGROUND_COLOR,
@@ -49,8 +50,12 @@ export class ViewerEngine {
     this.lastPresetId = DEFAULT_VIEW_PRESET
     this.animationPlaying = false
     this.disposed = false
-    this.frameHandle = null
     this.fps = 0
+    this.onRenderError = options.onRenderError
+    /** 渲染失败信息（非空表示画面可能不完整，UI 需要展示） */
+    this.renderError = null
+    /** 成功渲染的帧数：0 表示渲染循环从未真正出图，是排障的关键指标 */
+    this.renderedFrames = 0
 
     const postFxSettings = normalizePostFxSettings(options)
 
@@ -133,6 +138,14 @@ export class ViewerEngine {
 
     this.idle = createIdlePolicy({ idleMs: this.display.idleMs })
 
+    // 循环用「闭包 + 不可变句柄」实现（见 renderLoop.js）：
+    // 不依赖 this 绑定时机，也不会因回调抛错而留下僵尸句柄。
+    this.loop = createRenderLoop({
+      requestFrame: (callback) => requestAnimationFrame(callback),
+      cancelFrame: (handle) => cancelAnimationFrame(handle),
+      onFrame: () => this.onFrame(),
+    })
+
     this.fpsSampleStart = performance.now()
     this.fpsFrameCount = 0
 
@@ -156,34 +169,37 @@ export class ViewerEngine {
       this.canvas.addEventListener(eventName, this.activityHandler, { passive: true })
     }
 
-    this.tick = this.tick.bind(this)
     this.noteActivity()
-    this.start()
   }
 
   /* ------------------------------- 渲染循环 ------------------------------- */
 
   noteActivity() {
+    // 构造期（this.loop 还没建立）或已销毁时调用都必须是安全的：
+    // 这个函数会被 controls 的 change 事件、ResizeObserver、设置变更多处触发。
+    if (this.disposed || !this.loop) return
     this.idle.noteActivity(performance.now())
     this.start()
   }
 
   start() {
-    if (this.disposed || this.frameHandle !== null) return
-    this.frameHandle = requestAnimationFrame(this.tick)
+    if (this.disposed) return
+    this.loop.start()
   }
 
   stop() {
-    if (this.frameHandle !== null) {
-      cancelAnimationFrame(this.frameHandle)
-      this.frameHandle = null
-    }
+    this.loop.stop()
   }
 
-  tick() {
-    // 先排下一帧：这样即使本帧抛错，循环也不会被静默掐断
-    this.frameHandle = requestAnimationFrame(this.tick)
+  get isRunning() {
+    return this.loop.running
+  }
 
+  /**
+   * 每帧的调度决策：只有「相机在动 ∪ 有持续工作 ∪ 仍处于活动窗口」才继续排帧，
+   * 否则不再排帧，让循环自然停下（rAF 归零、CPU 占用为 0）。
+   */
+  onFrame() {
     const now = performance.now()
     const controlsChanged = this.controls.update()
     const continuous = hasContinuousWork({
@@ -191,26 +207,56 @@ export class ViewerEngine {
       animationPlaying: this.animationPlaying,
     })
 
-    if (!controlsChanged && !continuous && !this.idle.shouldRender(now)) {
-      // 空闲：彻底停掉 rAF，CPU 占用归零；下次输入/设置变更会重新唤醒
+    if (!controlsChanged && !continuous && !this.idle.shouldRender(now)) return
+
+    this.renderFrame()
+    // 继续排帧；若期间进入空闲，下一帧的决策会再次把它停掉
+    this.loop.start()
+  }
+
+  /**
+   * 渲染一帧。整帧用 try/catch 包住不是防御性编程的洁癖：
+   * 抛在 rAF 回调里的异常不会冒泡到任何 UI，现象就是「画布全黑但界面一切正常」，
+   * 极难排查。这里捕获后自动降级并把原因交给 UI 展示。
+   */
+  renderFrame() {
+    if (this.disposed) return
+    try {
+      this.postFx.render()
+      this.cssRenderer.render(this.scene, this.camera)
+      this.renderedFrames += 1
+      this.sampleFps()
+    } catch (error) {
+      this.handleRenderError(error)
+    }
+  }
+
+  handleRenderError(error) {
+    const message = error?.message ?? String(error)
+    console.error('[ViewerEngine] 渲染失败', error)
+
+    // 已经退化到直渲路径仍然失败 → 停止循环，避免每帧刷屏（用户可以再操作触发重试）
+    if (!this.display.postFxEnabled) {
       this.stop()
+      if (this.renderError?.level !== 'stopped') {
+        this.renderError = { message, level: 'stopped' }
+        this.onRenderError?.({ ...this.renderError, hint: '渲染已停止，请把控制台日志反馈给开发者' })
+      }
       return
     }
 
-    this.renderFrame()
-  }
-
-  renderFrame() {
-    if (this.disposed) return
-    this.postFx.render()
-    this.cssRenderer.render(this.scene, this.camera)
-    this.sampleFps()
+    // 第一步降级：关掉后处理直渲（后处理是链路上变量最多的一环）
+    this.display.postFxEnabled = false
+    this.postFx.setEnabled(false)
+    this.renderError = { message, level: 'postFx-disabled' }
+    this.onRenderError?.({ ...this.renderError, hint: '已自动关闭后处理并改用直渲路径重试' })
+    this.noteActivity()
   }
 
   /** 立即渲染一帧（截图、设置预览等一次性需求） */
   renderNow() {
+    if (!this.loop.running) this.renderFrame()
     this.noteActivity()
-    if (this.frameHandle === null) this.renderFrame()
   }
 
   sampleFps() {
@@ -393,6 +439,8 @@ export class ViewerEngine {
       triangles: this.renderer.info.render.triangles,
       drawCalls: this.renderer.info.render.calls,
       postFx: this.display.postFxEnabled,
+      renderedFrames: this.renderedFrames,
+      renderError: this.renderError,
     }
   }
 

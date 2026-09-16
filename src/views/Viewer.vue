@@ -21,7 +21,12 @@
       <el-main class="viewer__main">
         <!-- Web 端的 HTML5 拖放目标就是这个舞台区域；桌面端用原生拖放事件，会忽略它 -->
         <div ref="stageRef" class="viewer__stage">
-          <ModelCanvas @ready="onEngineReady" @context-lost="onContextLost" @fps="onFps">
+          <ModelCanvas
+            @ready="onEngineReady"
+            @context-lost="onContextLost"
+            @fps="onFps"
+            @render-error="onRenderError"
+          >
             <LoadingOverlay
               v-if="model.isLoading"
               :file-name="model.fileName"
@@ -55,6 +60,9 @@
         :gpu="rendererInfo.gpu"
         :webgl-version="rendererInfo.webglVersion"
         :runtime-label="capabilities.runtimeLabel"
+        :frames="rendererInfo.renderedFrames ?? 0"
+        :post-fx="rendererInfo.postFx !== false"
+        :error-text="renderError ? `${renderError.message}（${renderError.hint}）` : ''"
       />
     </el-footer>
   </el-container>
@@ -90,8 +98,9 @@ const display = useDisplayStore()
 // 引擎是重对象：用 shallowRef 只做引用传递，避免被深度代理
 const engineRef = shallowRef(null)
 const stageRef = ref(null)
-const rendererInfo = ref({ gpu: '未知', webglVersion: '—' })
+const rendererInfo = ref({ gpu: '未知', webglVersion: '—', renderedFrames: 0 })
 const fps = ref(0)
+const renderError = ref(null)
 const activeTab = ref('info')
 /** 当前视图预设（不持久化：它描述的是"这一眼"而不是偏好） */
 const currentPreset = ref(DEFAULT_VIEW_PRESET)
@@ -163,6 +172,17 @@ function onEngineReady(engine) {
 
 function onFps(value) {
   fps.value = value
+  // 顺带刷新渲染器指标（含累计帧数），供状态栏显示；每 0.5 秒一次，开销可忽略
+  if (engineRef.value) rendererInfo.value = engineRef.value.getRendererInfo()
+}
+
+/**
+ * 渲染异常：这类错误发生在 rAF 回调里，不会自己冒到界面上，
+ * 因此必须显式提示，否则用户只会看到"模型不显示"。
+ */
+function onRenderError(info) {
+  renderError.value = info
+  ElMessage.error(`渲染异常：${info.message}｜${info.hint}`)
 }
 
 function onContextLost() {
