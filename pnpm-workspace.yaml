@@ -1,0 +1,7 @@
+# pnpm 11 的构建脚本白名单（package.json 的 "pnpm" 字段已不再生效）
+#
+# esbuild 的 postinstall 只是在安装后启动 esbuild.exe 自检并创建 bin 软链；
+# 在本机沙箱下该子进程 spawn 会被拒绝（EPERM，命名管道限制），而平台二进制
+# 由可选依赖 @esbuild/win32-x64 直接提供、无需自检即可使用，因此这里关闭它。
+allowBuilds:
+  esbuild: false

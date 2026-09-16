@@ -1,0 +1,29 @@
+[package]
+name = "model-viewer"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+license = ""
+repository = ""
+edition = "2021"
+rust-version = "1.77.2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.6", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+dirs = "5"
+log = "0.4"
+# protocol-asset：启用 asset 协议，模型文件经 scope 授权后由 WebView 直接流式读取（避免 base64 IPC）
+tauri = { version = "2.10.3", features = ["devtools", "protocol-asset"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-log = "2"
+tauri-plugin-sql = { git = "https://github.com/tuyu79/plugins-workspace.git", branch = "v2-sql-default", package = "tauri-plugin-sql", features = ["sqlite"] }

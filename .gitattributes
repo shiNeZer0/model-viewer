@@ -1,0 +1,19 @@
+# 统一由 git 处理换行：仓库内存 LF，检出时按平台策略处理，
+# 避免 Windows 上 autocrlf 把整个文件判为“已修改”。
+* text=auto
+
+# 二进制资源：禁止任何换行/编码转换（否则会损坏文件）
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.icns binary
+*.wasm binary
+*.exe binary
+*.dll binary
+*.zip binary
+*.ttf binary
+*.woff binary
+*.woff2 binary

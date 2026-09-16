@@ -1,0 +1,31 @@
+{
+  "name": "model-viewer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/copy-decoders.mjs && vite",
+    "build": "node scripts/copy-decoders.mjs && vite build",
+    "build:web": "node scripts/copy-decoders.mjs && vite build --base=./",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/plugin-dialog": "^2.4.1",
+    "@tauri-apps/plugin-log": "^2.8.0",
+    "@tauri-apps/plugin-sql": "^2.4.0",
+    "element-plus": "^2.13.7",
+    "pinia": "^3.0.3",
+    "three": "^0.185.1",
+    "vue": "^3.5.32",
+    "vue-router": "^4.6.4"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.0",
+    "@vitejs/plugin-vue": "^6.0.5",
+    "vite": "^8.0.4",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,249 @@
+<template>
+  <el-container class="settings">
+    <el-header class="settings__header" height="52px">
+      <el-button text @click="router.push('/')">← 返回查看器</el-button>
+      <span class="settings__title">设置</span>
+      <el-tag size="small" type="info" effect="plain">{{ capabilities.runtimeLabel }}</el-tag>
+    </el-header>
+
+    <el-main class="settings__main">
+      <el-alert
+        v-if="loadError"
+        class="settings__alert"
+        type="warning"
+        :closable="false"
+        show-icon
+        :title="`部分设置读写失败：${loadError}`"
+      />
+
+      <el-alert
+        v-if="!isTauri"
+        class="settings__alert"
+        type="info"
+        :closable="false"
+        show-icon
+        title="Web 预览模式：浏览器无法访问本地绝对路径，因此只能通过文件选择或拖放打开模型，也没有目录授权与最近文件重开能力。"
+      />
+
+      <el-card v-if="isTauri" shadow="never" class="settings__card">
+        <template #header>
+          <div class="settings__card-header">
+            <span>已授权的路径（本次运行）</span>
+            <div>
+              <el-button size="small" :loading="busy" @click="refreshGrants">刷新</el-button>
+              <el-button size="small" type="danger" :disabled="!grants.length" @click="revokeAll">
+                撤销全部
+              </el-button>
+            </div>
+          </div>
+        </template>
+
+        <p class="settings__hint">
+          查看器只对「用户主动打开或拖入的文件所在目录」开放 asset 协议读取权限，
+          不会扫描磁盘。撤销后再次打开文件会重新授权。
+        </p>
+
+        <el-table :data="grants" size="small" empty-text="本次运行还没有授权任何路径">
+          <el-table-column prop="path" label="路径" min-width="260" show-overflow-tooltip />
+          <el-table-column label="类型" width="80">
+            <template #default="{ row }">{{ row.isDirectory ? '目录' : '文件' }}</template>
+          </el-table-column>
+          <el-table-column label="递归" width="80">
+            <template #default="{ row }">{{ row.recursive ? '是' : '否' }}</template>
+          </el-table-column>
+          <el-table-column label="授权时间" width="170">
+            <template #default="{ row }">{{ formatTimestamp(row.grantedAtMs) }}</template>
+          </el-table-column>
+        </el-table>
+      </el-card>
+
+      <el-card v-if="isTauri" shadow="never" class="settings__card">
+        <template #header><span>授权范围</span></template>
+        <el-form label-width="150px" label-position="left">
+          <el-form-item label="授权模式">
+            <el-select
+              :model-value="settings.grantMode"
+              style="width: 320px"
+              @update:model-value="settings.setGrantMode"
+            >
+              <el-option
+                v-for="option in grantModeOptions"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
+            </el-select>
+          </el-form-item>
+        </el-form>
+        <p class="settings__hint">
+          OBJ 的 .mtl 与贴图、glTF 的 .bin 常与模型文件不同层级，因此默认授权父目录整棵树；
+          磁盘根目录与用户主目录会被后端拒绝（此时会自动退化为仅授权该文件）。
+        </p>
+      </el-card>
+
+      <el-card shadow="never" class="settings__card">
+        <template #header><span>显示与性能</span></template>
+        <el-form label-width="150px" label-position="left">
+          <el-form-item label="最大像素比">
+            <el-slider
+              :model-value="settings.maxPixelRatio"
+              :min="1"
+              :max="2"
+              :step="0.25"
+              :format-tooltip="(value) => `${value}×`"
+              style="width: 320px"
+              @update:model-value="settings.setMaxPixelRatio"
+            />
+          </el-form-item>
+          <el-form-item label="默认开启转盘">
+            <el-switch
+              :model-value="settings.autoRotate"
+              @update:model-value="settings.setAutoRotate"
+            />
+          </el-form-item>
+          <el-form-item label="转盘速度">
+            <el-slider
+              :model-value="settings.autoRotateSpeed"
+              :min="0.5"
+              :max="8"
+              :step="0.5"
+              style="width: 320px"
+              @update:model-value="settings.setAutoRotateSpeed"
+            />
+          </el-form-item>
+        </el-form>
+        <p class="settings__hint">
+          高分屏上把像素比降到 1.0 能显著提升大模型帧率；此值会在下一次渲染时生效。
+        </p>
+      </el-card>
+
+      <el-card shadow="never" class="settings__card">
+        <template #header><span>关于</span></template>
+        <el-descriptions :column="1" size="small" border>
+          <el-descriptions-item label="应用版本">0.1.0（M0 里程碑）</el-descriptions-item>
+          <el-descriptions-item label="运行环境">
+            {{ capabilities.runtimeLabel }}（持久化后端：{{ capabilities.persistence }}）
+          </el-descriptions-item>
+          <el-descriptions-item label="技术栈">
+            Tauri 2 · Vue 3 · Element Plus · Three.js（0.185）
+          </el-descriptions-item>
+          <el-descriptions-item label="本次已实现">
+            打开/拖入 GLB、GLTF、STL；旋转缩放平移；转盘模式；适配视图；基础统计
+          </el-descriptions-item>
+          <el-descriptions-item label="计划中">
+            FBX / OBJ / PLY / 3MF、层级树与边界框、光照与环境、动画播放
+          </el-descriptions-item>
+        </el-descriptions>
+      </el-card>
+    </el-main>
+  </el-container>
+</template>
+
+<script setup>
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+
+import { capabilities, isTauri, listGrants, revokeGrants } from '../platform/index.js'
+import { useSettingsStore } from '../stores/settingsStore.js'
+import { describeError } from '../utils/error-messages.js'
+import { formatTimestamp } from '../utils/format.js'
+
+const router = useRouter()
+const settings = useSettingsStore()
+
+const grants = ref([])
+const busy = ref(false)
+const loadError = ref('')
+
+const grantModeOptions = [
+  { value: 'file', label: '仅文件本身' },
+  { value: 'parent', label: '父目录（不含子目录）' },
+  { value: 'parent-recursive', label: '父目录及子目录（推荐）' },
+]
+
+async function refreshGrants() {
+  if (!isTauri) return
+  busy.value = true
+  try {
+    grants.value = await listGrants()
+    loadError.value = ''
+  } catch (error) {
+    loadError.value = describeError(error)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function revokeAll() {
+  try {
+    await ElMessageBox.confirm('撤销后再次打开文件会重新授权，确定继续？', '撤销全部授权', {
+      type: 'warning',
+      confirmButtonText: '撤销',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return // 用户取消
+  }
+
+  try {
+    const report = await revokeGrants()
+    ElMessage.success(`已撤销 ${report.revoked} 条授权`)
+    await refreshGrants()
+  } catch (error) {
+    ElMessage.error(describeError(error))
+  }
+}
+
+onMounted(async () => {
+  await settings.load()
+  await refreshGrants()
+})
+</script>
+
+<style scoped>
+.settings {
+  height: 100vh;
+  background-color: var(--el-bg-color-page);
+}
+
+.settings__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--el-border-color);
+  background-color: var(--el-bg-color);
+}
+
+.settings__title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.settings__main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 960px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.settings__card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings__hint {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
+}
+
+.settings__alert {
+  margin: 0;
+}
+</style>
