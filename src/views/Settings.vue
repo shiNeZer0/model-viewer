@@ -111,6 +111,16 @@
               @update:model-value="settings.setAutoRotateSpeed"
             />
           </el-form-item>
+          <el-form-item label="空闲停止渲染">
+            <el-input-number
+              :model-value="idleSeconds"
+              :min="0"
+              :max="120"
+              :step="1"
+              @update:model-value="onIdleSecondsChange"
+            />
+            <span class="settings__inline-hint">秒后停止渲染（0 = 不停止），再次操作画面会自动唤醒</span>
+          </el-form-item>
         </el-form>
         <p class="settings__hint">
           高分屏上把像素比降到 1.0 能显著提升大模型帧率；此值会在下一次渲染时生效。
@@ -120,7 +130,7 @@
       <el-card shadow="never" class="settings__card">
         <template #header><span>关于</span></template>
         <el-descriptions :column="1" size="small" border>
-          <el-descriptions-item label="应用版本">0.1.0（M0 里程碑）</el-descriptions-item>
+          <el-descriptions-item label="应用版本">0.1.0（M1 里程碑）</el-descriptions-item>
           <el-descriptions-item label="运行环境">
             {{ capabilities.runtimeLabel }}（持久化后端：{{ capabilities.persistence }}）
           </el-descriptions-item>
@@ -128,10 +138,11 @@
             Tauri 2 · Vue 3 · Element Plus · Three.js（0.185）
           </el-descriptions-item>
           <el-descriptions-item label="本次已实现">
-            打开/拖入 GLB、GLTF、STL；旋转缩放平移；转盘模式；适配视图；基础统计
+            打开/拖入 GLB、GLTF、STL；相机控制与 7 个标准视图；8 种着色模式；背景/网格/坐标轴；
+            色调映射·曝光·饱和度后处理；空闲停渲染
           </el-descriptions-item>
           <el-descriptions-item label="计划中">
-            FBX / OBJ / PLY / 3MF、层级树与边界框、光照与环境、动画播放
+            FBX / OBJ / PLY / 3MF、层级树与边界框尺寸、光照与环境预设、动画播放
           </el-descriptions-item>
         </el-descriptions>
       </el-card>
@@ -141,20 +152,30 @@
 
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { capabilities, isTauri, listGrants, revokeGrants } from '../platform/index.js'
+import { useDisplayStore } from '../stores/displayStore.js'
 import { useSettingsStore } from '../stores/settingsStore.js'
 import { describeError } from '../utils/error-messages.js'
 import { formatTimestamp } from '../utils/format.js'
 
 const router = useRouter()
+const display = useDisplayStore()
 const settings = useSettingsStore()
 
 const grants = ref([])
 const busy = ref(false)
 const loadError = ref('')
+
+/** 空闲停渲染在界面上用「秒」，存储用毫秒 */
+const idleSeconds = computed(() => Math.round((display.idleMs ?? 0) / 1000))
+
+function onIdleSecondsChange(seconds) {
+  const value = Number.isFinite(seconds) ? seconds : 0
+  display.update('idleMs', Math.max(0, value) * 1000)
+}
 
 const grantModeOptions = [
   { value: 'file', label: '仅文件本身' },
@@ -245,5 +266,11 @@ onMounted(async () => {
 
 .settings__alert {
   margin: 0;
+}
+
+.settings__inline-hint {
+  margin-left: 10px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 </style>

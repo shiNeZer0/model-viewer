@@ -35,6 +35,14 @@
 【构建】package.json 新增 build:web（vite build --base=./，可部署到子目录）；桌面仍用 pnpm build（base '/'）。路由改 createWebHashHistory，静态托管无需 history fallback。解码器路径改为由 document.baseURI 推导的绝对 URL。
 
 【验证】pnpm test 61/61（7 个文件）；cargo test 24/24（含共享向量用例）；pnpm build 与 pnpm build:web 均成功，两种 base 的 dist/index.html 资源路径已核对。
+- [2026-09-16 15:35] [工作记录] model-viewer 四项待确认落地：模板清理/迁移v3删表/应用名中文/git 首次提交 — E:\AI-Coding\model-viewer 的四项待确认决策已全部落地（用户逐项选推荐方案）：
+
+1) 模板残留清理：删除 src/views/Home.vue、src/components/TaskList.vue、HelloWorld.vue、src/assets/{hero.png,vite.svg,vue.svg}；删除前用 grep 确认无任何引用（src 已只剩查看器相关代码）。注意 public/ 下还有 dclaw.png 与 icons.svg 两个未被引用的模板资源（index.html 只引用 favicon.svg），未在确认清单内，暂留待用户决定。
+2) 迁移 v3 删 tasks 表：新增 src-tauri/migrations/0002_drop_tasks.sql（DROP TABLE IF EXISTS tasks）+ lib.rs 注册 version:3，保持 append-only（0000 里建表的历史不动）。自验方法：用 miniconda 的 sqlite3.exe 在 src-tauri/target/ 下建 scratch 库，依次应用 0000/0001/0002，断言最终只剩 viewer_settings/lighting_themes/recent_files/granted_dirs 四表且 tasks 计数为 0（exit=0）。该迁移会在应用下次启动时对已有 ~/.model-viewer/app/app.db 生效。
+3) productName 改为「三维模型查看器」（identifier 保持 com.model-viewer.app 不变，避免影响文件关联注册与数据目录）。
+4) git 初始化：git init -b main + 首次提交 4eda0ff「feat(viewer): M0 骨架（Tauri 2 + Vue 3 + Three.js，Web/桌面双端）」，90 个文件，工作区干净。首次 add 时发现 .pnpm-store（pnpm 11 在项目根自建的本地包缓存，1.2 万文件）被裹进暂存区，已 git reset 后加入 .gitignore；同时新增 .gitattributes（* text=auto + png/ico/icns/wasm/字体等二进制标记，消除 autocrlf 的 LF→CRLF 噪声）；.gitignore 另外补了 src-tauri/gen/schemas（tauri-build 生成）。README.md 从模板文案重写为真实项目说明（双端形态、命令、结构、已实现/计划中、已知限制）。
+
+回归：cargo test 24/24、vitest 61/61、pnpm build 与 pnpm build:web 均成功。
 
 ## 经验教训 Lessons Learned
 
@@ -65,3 +73,12 @@
 6) **Web 端 input[type=file] 必须监听 cancel 事件**：用户取消选择时 change 不触发，只监听 change 会让 Promise 永远挂着（并泄漏 DOM 节点）。
 
 7) **两个后端都用动态 import**：platform/index.js 里 await import('./tauri.js') 与 import('./web.js')，否则 Web 包会把 @tauri-apps/* 与 plugin-sql 打进首屏。
+- [2026-09-16 15:35] [经验教训] 首次 git 提交与资源清理：先数暂存文件数、.gitattributes 治 autocrlf、迁移 sqlite3 离线自验、git grep 引用判定要排除记忆笔记 — git 首次提交与资源清理的实操教训（本轮实测）：
+
+1) **首次 `git add -A` 前必须先数文件数**：`git diff --cached --name-only | Measure-Object`。本轮 pnpm 11 在项目根自建了 `.pnpm-store`（内容寻址包缓存，无项目级 .npmrc、`pnpm config get store-dir` 为 undefined，却落在仓库内），一次就裹进 12115 个文件；靠"待提交文件数"这一步才发现（正常的 M0 规模应为 ~90）。发现后处理：`git reset` → .gitignore 加 `.pnpm-store` → 重新 add。同理需要忽略的还有 `src-tauri/gen/schemas`（tauri-build 生成的 ACL/能力 schema）。
+
+2) **Windows 上 autocrlf 会产生海量 LF→CRLF 警告**，把真正的输出淹没。加一个 `.gitattributes`（`* text=auto` + `*.png/*.ico/*.icns/*.wasm/*.ttf` 等 binary）即可明确二进制不做转换、文本交还给 git 策略，比反复读警告省事。
+
+3) 迁移 SQL 的离线自验很划算：直接用 sqlite3 CLI 把 migrations/*.sql 依次灌进一个放在 target/（已忽略）下的 scratch 库，再断言 sqlite_master 里的表集合与残留表计数。不需要启动 GUI 就能证明 append-only 迁移链在全新库上可执行。
+
+4) **用 `git grep` 做“资源是否被引用”的判定时，必须收敛扫描面**：dsh-memoir 会把文件名写进 PROJECT_MEMORY.md（记忆笔记正文里提到 `dclaw.png`/`icons.svg`），导致 `git grep -E "dclaw|icons\.svg"` 命中自己的笔记而被误判为“仍被引用”。正确做法是限定引用载体类型并排除记忆文件：`git grep -n -I -E "<pattern>" -- "*.html" "*.vue" "*.js" "*.ts" "*.json" "*.css" "*.md" ":!PROJECT_MEMORY.md"`。另注意 PROJECT_MEMORY.md 由 memoir 自动改写，会周期性显示为已修改（M），属正常现象。

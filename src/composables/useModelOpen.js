@@ -11,6 +11,7 @@ import { LoadCancelledError, createLoadToken, loadModel } from '../core/three/Mo
 import { collectModelStats } from '../core/three/stats.js'
 import { capabilities, describeError, openModelSources, subscribeModelDrop } from '../platform/index.js'
 import { touchRecentFile } from '../platform/storage/index.js'
+import { useDisplayStore } from '../stores/displayStore.js'
 import { useModelStore } from '../stores/modelStore.js'
 import { useSettingsStore } from '../stores/settingsStore.js'
 
@@ -20,6 +21,7 @@ import { useSettingsStore } from '../stores/settingsStore.js'
 export function useModelOpen(engineRef) {
   const model = useModelStore()
   const settings = useSettingsStore()
+  const display = useDisplayStore()
 
   let currentToken = null
   /** 当前打开的来源句柄（Web 端持有 blob URL，需要在替换时释放） */
@@ -79,9 +81,11 @@ export function useModelOpen(engineRef) {
       if (token.cancelled) return
 
       // 上屏（引擎内部会释放上一个模型的 GPU 资源）+ 统计
-      const { disposal } = engine.setModel(result.root, { fit: true })
+      const { disposal, shadeWarnings } = engine.setModel(result.root, { fit: true })
       const stats = collectModelStats(result.root, { animationCount: result.animations.length })
       model.setReady({ root: result.root, stats })
+      // 着色模式相关的提示（如「模型过大已跳过线框」）交给显示面板展示
+      if (shadeWarnings?.length) display.setNotes(shadeWarnings)
 
       if (disposal) {
         console.info('[useModelOpen] 切换模型时释放了上一个模型的资源', disposal)
