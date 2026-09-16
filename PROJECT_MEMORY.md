@@ -111,3 +111,17 @@
 经验：任何"自己排下一帧"的循环，都要(a)不依赖 this 绑定、(b)保证异常路径下句柄状态一致、(c)用可注入的 requestFrame/cancelFrame 把调度器抽出来单测——这类 bug 在浏览器里只以"画面不动"的形式出现，没有测试就只能靠用户报障。
 
 附带两条排障经验：① 判断用户实际跑的是哪个形态，最快的方法是看该形态独有的产物——Tauri 的 `~/.model-viewer/app/app.log` 与数据目录不存在，就直接证明"桌面版从未启动"，问题必然在 Web 路径；② 我在用户开着 dev server 时改文件，HMR 会先应用模板再应用脚本，导致控制台出现"属性未定义"的**中间态假警告**（本次 `onRenderError` 那条即属此类），让用户复测前先强刷页面可排除这类噪声。
+- [2026-09-16 18:11] [经验教训] 开关"意图"要与几何重建态分离；用可在 Node 跑的单测把 UI→store→场景 链路切开定位 — 「开关状态」与「几何重建」必须分离（model-viewer M1 实测，用户报"辅助显示点击开关不起作用"）：
+
+【两个同源缺陷】Stage.fitToBox 在模型包围盒变化时会重建网格/坐标轴几何，但重建逻辑只看"对象当前是否可见"，没有遵循用户的开关意图，于是出现两种怪现象：
+1. 网格开着时加载模型 → 几何被 dispose 并置 null 却没按意图补建 → **网格消失**，此时再点开关完全看不出变化（用户判定"开关坏了"）；
+2. 坐标轴关掉后加载模型 → 重建时无视意图直接把它建回来 → **关不掉的复活**。这来自用隐式可见性记录状态（`if (this.axesVisible) this.ensureAxes()` 里的 axesVisible 只在创建时被赋值，关掉时不变）。
+
+【修法】把两类状态拆开：**意图**（wantGrid/wantAxes，只由 UI 决定）与**几何尺寸**（gridSize/groundY，只由模型包围盒决定）；尺寸变化只允许"重建几何"，重建后统一走 syncHelpers() 按意图恢复可见性。ensureGrid/ensureAxes 只负责按尺寸创建，不再兼任状态记录。
+
+【关键排障手法（值得复用）】不要靠读代码猜，而是**写一个能在 Node 里跑的测试把链路切开**：
+- three 的 Scene/GridHelper/AxesHelper/Box3 在 Node 下可直接构造（不需要 WebGL），所以 Stage 的辅助显示逻辑完全可单测 → 这两处缺陷是第一次运行 stage.test.js 就红的（`expected null to be truthy`）；
+- UI→引擎的接线也能测：`setActivePinia(createPinia())` + `computed(() => store.toEngineSettings)` + `watch` + `nextTick()`，即可在无 DOM 环境下验证"改设置 → 快照变化 → watch 被触发"（store.update 传 {persist:false} 绕过存储后端）。
+这样一次运行就把"是 Vue 响应式断了，还是 three 场景逻辑断了"这个二分问题直接定位，不用再向用户追问。
+
+【附带修复】无 Canvas 环境生成渐变纹理失败时 scene.background 会变成 null（看起来像没设置背景），现回退为纯色。
