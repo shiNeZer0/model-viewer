@@ -122,6 +122,28 @@
 【验证策略】three 的动画系统不依赖 WebGL，因此用真实 AnimationMixer + AnimationClip（VectorKeyframeTrack('.position')，x 在 2 秒内 0→10→0）做**确定性数值断言**：t=0.5 时 x≈5；2× 倍速下 delta 0.25 前进 0.5s；暂停后不前进；停止归零；seekNormalized(0.75)→time 1.5 且 x≈5；越界夹取；once 播完 finished 且重播从头；loop 写回 action；按名称选片段；非法目标不改选中；多片段切换停住前一段；无片段时全部操作安全返回。
 
 【结果】vitest 269/269（27 文件）、cargo 24/24、pnpm build 通过。GUI 验收（真实带动画模型播放、拖时间轴、倍速、循环模式）待用户在本机确认。
+- [2026-09-17 09:19] [工作记录] model-viewer M5 完成：FBX/OBJ(+MTL)/PLY/3MF 全部接入（7 格式齐备，294 测试全绿） — E:\AI-Coding\model-viewer 的 M5 里程碑（补齐 FBX / OBJ(+MTL) / PLY / 3MF）已完成并提交（commit f3fa6e6，工作区干净）。至此 7 种格式全部可打开。
+
+【新增 core/three/formatLoaders.js】四个 loader，全部按需 import；同时导出可单测的纯函数：
+- siblingUrl(modelUrl, ext)：从模型 URL 推导兄弟文件 URL（保留 query/hash；只替换最后一个"文件段"的扩展名，因此 /m/v1.2/cube 不会把 v1.2 当扩展名）。
+- extractLocalPath(ref)：识别绝对本地路径。Windows 盘符路径原样返回；`file:///E:/x` 去掉盘符前的斜杠；**POSIX 的 `file:///home/u/x` 必须保留前导斜杠**（我曾把期望写成去掉，测试纠正了认知）。
+- normalizeReferenceUrl(requested, { assetMap, toAssetUrl })：先走 assetMap（含 basename 兜底），再识别本地绝对路径并用调用方给的转换器改写；未命中一律原样返回，保证缺失资源仍能被 LoadingManager 上报。
+- loadFbx / loadObj / loadPly / loadThreeMf + EXTRA_FORMAT_LOADERS 映射表（ModelLoader 按 id 分派）。
+- OBJ 关键决策：.mtl 缺失或解析失败**不报错**，换成默认黏土材质 + 一条提示（纯几何 OBJ 合法）。
+- PLY：无法线则 computeVertexNormals；含 color 属性则 vertexColors 材质。
+- nameOfUrl：**必须先 decodeURIComponent 再按分隔符切分**，否则 asset URL 里的 %5C 编码反斜杠会被漏掉（测试抓到）。
+
+【新增 core/three/orientation.js（Z-up ↔ Y-up）】
+- shouldConvertUpAxis：auto 模式下**只有 3mf 自动转换**（规范明确 Z-up），FBX 视导出器而定所以不猜；keep 永不转；z-up 强制转。
+- createUpAxisQuaternion([-π/2,0,0])：绕世界 X 轴 -90°；分量非有限值回退 0，绝不产生 NaN 姿态。
+- ModelOrientation：记住原始 quaternion，每次从原始值重算并**预乘**（世界空间旋转，语义与用户看到的一致），反复切换不累积旋转——与 ModelPlacement 同一模式。
+- 引擎接线：setModel(root, { animations, formatId }) 里，轴向修正必须在**量包围盒之前**应用，否则尺寸/贴地/相机适配会全部跟着错。
+
+【其他】formats.js 七种格式全部 loadable:true；formats.test.js 改为"七种全部可加载且都有实现"（防注册表与实现漂移）；loader 返回的 warnings 经 useModelOpen 汇总进信息面板。
+
+【明确留到 M6 的三项（文档 §20.2 有记录）】① MTL 绝对路径重写的**接线**（纯函数已实现并单测，只差 loader 侧 URL 修饰器 + 平台层同步转换器 getLocalPathConverter）；② 手动轴向覆盖 UI（需给 displayStore 加 display.upAxis 并持久化，ModelOrientation 已就绪）；③ 新格式的字节级进度（loadAsync 未接 onProgress，只显示不确定进度）。
+
+【结果】vitest 294/294（29 文件）、cargo 24/24、pnpm build 通过。GUI 验收（四种格式真实文件能否打开、OBJ 贴图、3MF 是否立起来）待用户在本机确认。
 
 ## 经验教训 Lessons Learned
 
