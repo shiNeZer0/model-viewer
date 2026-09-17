@@ -124,7 +124,7 @@ cargo test --manifest-path src-tauri/Cargo.toml   # Rust 单测
 ## 计划中（M6 剩余）
 
 > 第 1~6 项已完成（见上）。第 7 项：**NSIS 安装包已成功产出**
-> （`src-tauri/target/release/bundle/nsis/三维模型查看器_0.1.0_x64-setup.exe`，5.72 MiB），
+> （`src-tauri/target/release/bundle/nsis/三维模型查看器_0.1.0_x64-setup.exe`，4.3 MiB），
 > 打包方式按用户决定改为**只打 NSIS**（避开 WiX 的 .NET Framework 3.5 依赖，
 > 且中文产品名在 NSIS 下没有问题）；仍待真机完成的是**帧率基准的数值**
 > 与装包后的"双击打开"验收。详见 `docs/设计文档.md` §29。
@@ -152,6 +152,7 @@ src-tauri/
   migrations/        SQLite 迁移（append-only）
 tests/fixtures/      前后端共用的测试数据（格式嗅探向量）
 docs/设计文档.md      完整设计方案与接口契约
+assets/Icon.png      应用图标源图（2048×2048，透明背景）；改图标后跑 pnpm tauri icon assets/Icon.png（见设计文档 §32）
 ```
 
 ## 已知限制
