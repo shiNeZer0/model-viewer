@@ -213,14 +213,17 @@
 这样一次运行就把"是 Vue 响应式断了，还是 three 场景逻辑断了"这个二分问题直接定位，不用再向用户追问。
 
 【附带修复】无 Canvas 环境生成渐变纹理失败时 scene.background 会变成 null（看起来像没设置背景），现回退为纯色。
-- [2026-09-17 08:12] [经验教训] 同文件并发 edit 会产生被 HMR 放大的中间态；store 无单测让最基础的引用错误漏到用户侧 — 两个操作层面的教训（model-viewer M2 期间，用户侧报 "markRaw is not defined"）：
+- [2026-09-17 08:12] [经验教训] 同文件并发 edit 会留下"源码已对但 dev server 缓存仍旧"的中间态；用编译器级静态检查区分源码缺陷与服务端缓存 — 同文件并发 edit 的**后果比想象中更黏**（model-viewer 实测两次踩到）：
 
-1) **同一条消息里对同一个文件发多个 edit 会并发竞争，产生"半截子"中间态**。本轮我把"加 markRaw 用法"和"补 markRaw import"两个 edit 放在同一条消息里对 modelStore.js 并发执行，结果中间态（有用法、无 import）被用户正开着的 dev server 经 HMR 推进浏览器 → 用户打开模型即报 ReferenceError。规约：**同一文件的多次修改必须合并成一次 write/edit，或分多轮串行**；跨文件并发没问题，同文件并发不行。
-   （另外注意：事后再 grep 源码、跑构建都是"一切正常"——因为最终态是对的。所以"用户报错但我在本地复现不出来"时，要优先怀疑**时间维度**：HMR/缓存把他带到了我编辑过程中的某个中间态。让他 Ctrl+F5 强刷是第一条动作。）
+1) 第一次（M2 期间）：并发写入产生"有用法、无 import"的中间态，被运行中的 dev server 经 HMR 推到浏览器 → 用户报 `markRaw is not defined`。
+2) 第二次（M4 期间，我自己违反了刚定的规约）：同一条消息里对 `Viewer.vue` 发了两个 edit（onMounted 与动画处理函数），**两个 edit 都回报成功、源码最终也正确**，但用户刷新页面后仍报 `Property "onPlayAnimation" was accessed during render but is not defined on instance`——因为 **Vite dev server 的模块转换缓存里留着一份过期结果，普通 F5 只会重复拿到它**。
 
-2) **"X is not defined" + "Cannot access 'instance' before initialization" 同时出现时的解读**：前者是根因（引用了未导入的标识符），后者是 Vue 在组件初始化期间走错误处理路径触发的 TDZ 次生报错。**不要被后者的"Vue 内部感"带偏去查框架**，先解决前者；本例两条 TDZ 在修好前者后自然消失。
+处置与验证顺序（可复用）：
+- 先用 Vue 官方编译器**证明源码是否正确**，而不是继续读代码猜：`compileScript` 取绑定集合 + `compileTemplate` 取产物，检查 `_ctx.<name>` 与绑定集合的交集。命中即"脚本里有顶层声明、模板却按实例属性访问"（真实缺陷）；不命中则说明源码没问题，问题在服务端缓存。
+- 已固化为工具 `scripts/diagnose-sfc.cjs`（可传文件参数，默认扫 src 下全部 .vue；自动在 node_modules/.pnpm 里定位 @vue/compiler-sfc）。全量 14 个组件通过。
+- 结论与用户侧动作：**重启 dev server**（必要时 touch 一下该文件触发重新转换）。仅靠强刷不一定有效，因为过期的是"服务端的转换缓存"而不是浏览器缓存。
 
-3) **store 没有单测 = 验证缺口**。modelStore 此前 0 个用例，所以"用了 API 却没 import"这种最基础的问题能一路漏到用户侧（引用未导入标识符只在**调用时**才抛错，构建/eslint 都不一定拦得住）。Pinia setup store 在 Node 下可直接单测（setActivePinia(createPinia())），本轮补齐 7 例后即覆盖状态流转、进度夹取、纯数字快照断言、层级就地补丁与 reset 清理。凡新增 store 一律同步补最小单测集。
+**硬规约（第二次教训后升级）**：任何情况下都不得在同一条消息里对同一个文件发多个 edit —— 并发写入不仅可能丢改动，还可能让 dev server 留下一份"源码已对、服务端仍错"的缓存，排查成本远高于多花一轮消息。
 - [2026-09-17 08:35] [经验教训] CSS 静默裁切两大家族：百分比高度链断裂（overflow 不触发）与 flex 子项被压缩（overflow:hidden 裁掉内容） — CSS 布局「静默裁切」两大家族（model-viewer 实测，用户先后报"侧边光照栏下方设置无法到达"与"三张光源卡片内容缺失"；两者现象都像"内容不够 / 看不到"，但根因不同，修法也不同）：
 
 【A. 百分比高度链断裂 → overflow 根本不触发】

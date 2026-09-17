@@ -287,6 +287,13 @@ export class ViewerEngine {
     this.lastAnimationTickAt = performance.now()
     this.animationState = state
     this.onAnimationTick?.(state)
+    /*
+     * 必须显式唤醒渲染循环。
+     * 引擎的 activity 监听只挂在 canvas 上（pointerdown/wheel/keydown…），
+     * 而面板里的点击根本不经过 canvas；若循环已因空闲停掉，这里不唤醒就会出现
+     * "点了播放/切了片段却毫无反应"——状态变了但没有任何一帧被渲染。
+     */
+    this.noteActivity()
     return state
   }
 

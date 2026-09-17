@@ -261,3 +261,66 @@ describe('AnimationController', () => {
     expect(controller.currentIndex).toBe(-1)
   })
 })
+
+describe('播放中切换片段（回归用例）', () => {
+  /** 第二段：x 在 1 秒内 0 → 5 */
+  function buildTwoClips() {
+    const { root, clip } = buildAnimatedModel()
+    const second = new AnimationClip('第二段', 1, [
+      new VectorKeyframeTrack('.position', [0, 1], [0, 0, 0, 5, 5, 5]),
+    ])
+    return { root, clip, second, controller: new AnimationController(root, [clip, second]) }
+  }
+
+  it('切换片段后仍能再次播放（用户报障场景）', () => {
+    const { controller } = buildTwoClips()
+
+    controller.selectClip(0)
+    controller.play()
+    controller.update(0.5)
+    expect(controller.getState().time).toBeCloseTo(0.5, 4)
+    expect(controller.getState().playing).toBe(true)
+
+    controller.selectClip(1)
+    const afterSwitch = controller.getState()
+    expect(afterSwitch.playing).toBe(false)
+    expect(afterSwitch.time).toBe(0)
+    expect(afterSwitch.clipName).toBe('第二段')
+
+    // 关键：切换后必须能重新播放并继续推进时间轴
+    expect(controller.play()).toBe(true)
+    controller.update(0.5)
+    const resumed = controller.getState()
+    expect(resumed.playing).toBe(true)
+    expect(resumed.time).toBeCloseTo(0.5, 4)
+  })
+
+  it('切换后旧片段不再参与姿势混合（否则两段各占 50% 权重，动起来会失真）', () => {
+    const { root, controller } = buildTwoClips()
+
+    controller.selectClip(0)
+    controller.play()
+    controller.update(0.8)
+
+    controller.selectClip(1)
+    controller.play()
+    controller.update(0.5)
+
+    // 第二段 t=0.5 时 x 应为 2.5；若旧片段（x=0）仍以权重 1 参与混合，会得到约 1.25
+    expect(root.position.x).toBeCloseTo(2.5, 3)
+  })
+
+  it('切回原片段同样能播放', () => {
+    const { controller } = buildTwoClips()
+    controller.selectClip(1)
+    controller.play()
+    controller.update(0.2)
+
+    controller.selectClip(0)
+    controller.play()
+    controller.update(0.5)
+    expect(controller.getState().playing).toBe(true)
+    expect(controller.getState().time).toBeCloseTo(0.5, 4)
+    expect(controller.getState().clipName).toBe('位移测试')
+  })
+})
