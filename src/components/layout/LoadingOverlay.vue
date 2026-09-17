@@ -37,7 +37,7 @@ const detail = computed(() =>
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: rgba(15, 17, 21, 0.72);
+  background-color: var(--viewer-overlay-bg);
 }
 
 .loading-overlay__card {

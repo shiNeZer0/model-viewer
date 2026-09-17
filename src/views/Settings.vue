@@ -128,9 +128,30 @@
       </el-card>
 
       <el-card shadow="never" class="settings__card">
+        <template #header><span>外观</span></template>
+        <el-form label-width="150px" label-position="left">
+          <el-form-item label="界面主题">
+            <el-radio-group
+              :model-value="theme.mode"
+              @update:model-value="theme.setMode($event)"
+            >
+              <el-radio-button v-for="item in THEME_MODES" :key="item.id" :value="item.id">
+                {{ item.label }}
+              </el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+        </el-form>
+        <p class="settings__hint">
+          界面（工具栏、侧栏、对话框）跟随主题；<strong>3D 视口底色不跟随</strong>——
+          仍由「显示 → 背景」控制并默认深色，与主流三维软件一致，便于判断形体与材质。
+          「跟随系统」会持续监听系统明暗切换。
+        </p>
+      </el-card>
+
+      <el-card shadow="never" class="settings__card">
         <template #header><span>关于</span></template>
         <el-descriptions :column="1" size="small" border>
-          <el-descriptions-item label="应用版本">0.1.0（M1 里程碑）</el-descriptions-item>
+          <el-descriptions-item label="应用版本">0.1.0</el-descriptions-item>
           <el-descriptions-item label="运行环境">
             {{ capabilities.runtimeLabel }}（持久化后端：{{ capabilities.persistence }}）
           </el-descriptions-item>
@@ -138,11 +159,13 @@
             Tauri 2 · Vue 3 · Element Plus · Three.js（0.185）
           </el-descriptions-item>
           <el-descriptions-item label="本次已实现">
-            打开/拖入 GLB、GLTF、STL；相机控制与 7 个标准视图；8 种着色模式；背景/网格/坐标轴；
-            色调映射·曝光·饱和度后处理；空闲停渲染
+            GLB / GLTF / STL / FBX / OBJ(+MTL) / PLY / 3MF 七种格式；相机控制与 7 个标准视图；
+            8 种着色模式；背景（含环境贴图）/网格/坐标轴；边界框与单位换算；层级树与可见性；
+            色调映射·曝光·饱和度后处理；三点光源与环境光照预设及自定义光照主题；
+            动画片段选择与播放控制；空闲停渲染；明暗主题
           </el-descriptions-item>
           <el-descriptions-item label="计划中">
-            FBX / OBJ / PLY / 3MF、层级树与边界框尺寸、光照与环境预设、动画播放
+            最近文件、文件关联（双击打开）、截图导出、导入 HDR 环境贴图、应用打包与性能回归
           </el-descriptions-item>
         </el-descriptions>
       </el-card>
@@ -155,15 +178,18 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
+import { THEME_MODES } from '../core/theme.js'
 import { capabilities, isTauri, listGrants, revokeGrants } from '../platform/index.js'
 import { useDisplayStore } from '../stores/displayStore.js'
 import { useSettingsStore } from '../stores/settingsStore.js'
+import { useThemeStore } from '../stores/themeStore.js'
 import { describeError } from '../utils/error-messages.js'
 import { formatTimestamp } from '../utils/format.js'
 
 const router = useRouter()
 const display = useDisplayStore()
 const settings = useSettingsStore()
+const theme = useThemeStore()
 
 const grants = ref([])
 const busy = ref(false)

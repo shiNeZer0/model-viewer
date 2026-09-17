@@ -101,7 +101,7 @@ const formatDuration = formatClipDuration
   transform: translateX(-50%);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
-  background: rgba(15, 17, 21, 0.78);
+  background: var(--viewer-overlay-bg);
   backdrop-filter: blur(3px);
 }
 

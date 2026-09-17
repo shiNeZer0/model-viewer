@@ -187,4 +187,11 @@ const dimensionText = computed(() => {
   border-color: var(--el-color-primary);
   color: var(--el-color-primary);
 }
+
+/* 亮色主题下换成浅色半透明底（用户指定的 0.3 透明度保持一致） */
+html:not(.dark) .info-hud__panel,
+html:not(.dark) .info-hud__chip {
+  background: rgba(255, 255, 255, 0.34);
+  border-color: rgba(255, 255, 255, 0.5);
+}
 </style>

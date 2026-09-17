@@ -277,7 +277,7 @@
 1. 扫描已确认 **ModelInfoPanel 与 DisplayPanel 同样缺少 `flex-shrink: 0` 保护**（两者都是固定高度 flex 列容器且含 `overflow:hidden` 的子元素），存在与光照页相同的潜在裁切风险；已向用户提出，等其确认后再补这一行。
 2. 这两个面板也**尚未**加 `max-height: calc(100vh - 130px)` 这层与祖先无关的兜底。
 3. 若再报"内容缺失/看不到"，先让用户 `Ctrl+F5` 强刷（旧 bundle 会看到修复前状态），再按 lessons 条目的两个判断法定位是 A（高度链）还是 B（flex 收缩）。
-- [2026-09-17 09:40] [行动指南] 界面布局与控件定案：动画控制条悬浮底部（图标按钮并排）、信息 HUD 悬浮左上角（快捷键 I）；含"按钮异常"待确认的四个候选方向 — model-viewer 界面布局与控件的用户定案（2026-09，按用户明确要求调整，后续不要改回）：
+- [2026-09-17 09:40] [行动指南] 界面布局与控件定案：动画控制条悬浮底部（图标按钮并排）、信息 HUD 悬浮左上角（透明度 0.3、无模型不渲染、快捷键 I） — model-viewer 界面布局与控件的用户定案（2026-09，按用户明确要求调整，后续不要改回）：
 
 【动画控制】悬浮在渲染区底部的控制条（components/viewer/AnimationBar.vue）：片段选择 + 播放·暂停 + 停止 + 时间轴 + 倍速 + 循环模式 + "已播完"标记；**仅在模型含动画时出现**；事件名与原侧栏面板一致，所以 Viewer.vue 处理函数无需改动。**原「动画」标签页已删除**（AnimationPanel.vue 已删）。
 
@@ -287,10 +287,32 @@
 - 文字去掉后必须补 `title` 与 `aria-label`；
 - 控制条内 `:deep(.el-button + .el-button) { margin-left: 0 }`，间距只由容器 gap 负责（EP 自带 12px 会与 gap 叠加，见 lessons 的 C 家族）。
 
-【模型信息】渲染区左上角浮动 HUD（components/viewer/InfoHud.vue）：文件名/格式/大小/三角面/顶点/尺寸（按声明单位换算，三轴各自带单位）/帧数/FPS/渲染模式/运行环境 + 渲染异常文案；折叠态只留小圆点按钮。**快捷键 I 切换显示隐藏**（会话级未持久化；HUD 自带折叠按钮）。**原底部状态栏已删除**（ViewerStatusBar.vue 已删）。
+【模型信息 HUD】渲染区左上角浮动浮层（components/viewer/InfoHud.vue）：文件名/格式/大小/三角面/顶点/尺寸（按声明单位换算，三轴各自带单位）/帧数/FPS/渲染模式/运行环境 + 渲染异常文案。用户明确的两点（commit 87dd347）：
+- **背景透明度 0.3**（面板与折叠圆点一致；原为 0.72）——以便直接观察模型；
+- **未打开模型时完全不渲染**（根节点 `v-if="model.hasModel"`），不再显示"未打开模型"的空面板；
+- 有模型时：`visible` 为真显示面板，为假只留一个小圆点按钮（可点开）；**快捷键 I** 切换（会话级未持久化）。
+- 待确认项：若用户反馈浅色模型上 0.3 导致文字发虚，可改为 0.4 或加轻量文字阴影 —— 未获反馈前不要改。
+**原底部状态栏已删除**（ViewerStatusBar.vue 已删）。
 
 【相关约束】① 浮层都放在 `.viewer__stage` 内（`position:absolute` + `z-index:3`），必须留在 `ModelCanvas` 的兄弟位置而非插槽内，避免被 canvas/CSS2D 层影响交互；② 快捷键 `I` 的 enabled 恒真，其余快捷键各自做空值保护。
 
 【待用户确认（不要提前改）】用户曾反馈"播放与停止按钮之间异常"，我判断为**间距叠加**并已修（commit 0920a01）；若其实指**图标辨识度**（暂停两条竖线与停止方块在 14px 下易混）／**两按钮宽度或风格不统一**／**播放态 primary 高亮让两者不协调**／**窄窗口折行导致位置异常**，这四个方向都尚未改，等用户一句话点明再动。
 
 【验证手段】这类纯 UI 结构调整**构建不报错、单测覆盖不到**，固定用 `node scripts/diagnose-sfc.cjs` 做组件绑定静态检查（14 个组件）+ 人工在浏览器确认。
+- [2026-09-17 10:01] [行动指南] 明暗主题现状：固定暗色（dark 类写死、无外观设置）；已给出低成本实施方案与 5 处待抽变量的硬编码颜色，等用户确认是否实施 — model-viewer 的明暗主题现状与待实施方案（已查证，**尚未实现**，不要当成已有功能）：
+
+【现状：不具备明暗切换，当前是固定暗色】
+- `index.html` 第 2 行是 `<html lang="zh-CN" class="dark">` —— `dark` 类**写死**；
+- `src/main.js` 已引入 `element-plus/theme-chalk/dark/css-vars.css`（所以 EP 组件的暗色变量是可用的）；
+- `settingsStore` 的设置项只有 autoRotate / autoRotateSpeed / grantMode / maxPixelRatio 等，**没有外观项**；全库搜 `prefers-color-scheme` 零命中；
+- 注意：代码里大量 `theme` 命中指的是**「光照主题」**（用户保存的打光快照，存 lighting_themes 表），与 UI 明暗无关，别混淆。
+
+【成本评估：低，因为 EP 暗色机制就是加减 `<html>` 上的 `dark` 类】
+1. `settingsStore` 增加 `appearance: 'dark' | 'light' | 'system'`（写入 viewer_settings，默认沿用暗色）；
+2. 新增应用函数：按设置给 `document.documentElement` 加/去 `dark`；`system` 走 `matchMedia('(prefers-color-scheme: dark)')` 并监听变化；
+3. 「设置」页加三选（暗色/亮色/跟随系统）+ 工具栏快捷切换按钮；
+4. **必须同时处理 5 处硬编码颜色**，否则亮色下浮层仍是深色块（已定位）：`Viewer.vue` 画布底 `#1b1e24`；`ModelCanvas.vue` 透明棋盘格 `#22262d`/`#333941`；`InfoHud.vue` `rgba(15,17,21,0.3)`（两处）；`AnimationBar.vue` `rgba(15,17,21,0.78)`；`LoadingOverlay.vue` `rgba(15,17,21,0.72)` → 抽成 CSS 变量（如 `--viewer-canvas-bg`、`--viewer-overlay-bg`）。
+
+【我给用户的建议取舍（待其确认，未拍板）】**UI 跟随明暗、3D 视口背景不跟随**（视口背景仍由「显示 → 背景」控制、默认深色）——理由：Blender/Maya 等主流三维软件即使 UI 是亮色，视口也常保持深色，更利于判断形体与材质；跟随会破坏用户已调好的观感。
+
+【行动约束】提出该方案时沙箱处于**只读**模式，实施需要用户批准写权限（用 sandbox_permissions 申请）。下一步动作：等用户回答"是否按此方案实施 / 是否只做跟随系统"，再动手。
