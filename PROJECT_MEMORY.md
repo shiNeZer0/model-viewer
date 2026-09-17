@@ -144,6 +144,20 @@
 【明确留到 M6 的三项（文档 §20.2 有记录）】① MTL 绝对路径重写的**接线**（纯函数已实现并单测，只差 loader 侧 URL 修饰器 + 平台层同步转换器 getLocalPathConverter）；② 手动轴向覆盖 UI（需给 displayStore 加 display.upAxis 并持久化，ModelOrientation 已就绪）；③ 新格式的字节级进度（loadAsync 未接 onProgress，只显示不确定进度）。
 
 【结果】vitest 294/294（29 文件）、cargo 24/24、pnpm build 通过。GUI 验收（四种格式真实文件能否打开、OBJ 贴图、3MF 是否立起来）待用户在本机确认。
+- [2026-09-17 10:06] [工作记录] 明暗主题已实现：暗色/亮色/跟随系统（UI 跟随、3D 视口不跟随；308 测试全绿） — E:\AI-Coding\model-viewer 实现了界面明暗主题（commit 13d15a6，工作区干净；已通过 308/308 单测 + 14 组件 SFC 绑定检查 + 双端构建）。**替代此前"不具备明暗切换"的记录**。
+
+【实现】
+- `core/theme.js`（纯函数，可测）：`THEME_MODES`（dark/light/system，默认 dark）、`resolveTheme(设置, 系统偏好)`、`applyTheme(theme, doc)` —— 切换 `<html>` 的 `dark` 类**并同步 `documentElement.style.colorScheme`**（关键：不同步的话亮色主题下原生滚动条/下拉/对话框仍是深色）、`systemPrefersDark()`、`createSystemThemeWatcher({onChange, target})` 返回取消订阅函数（环境不支持 matchMedia 时返回空函数，调用方无需判空）。
+- `stores/themeStore.js`：**独立 store**（不是塞进 settingsStore）——因为它带"落到 DOM 的副作用 + 系统监听生命周期"，职责与纯偏好读写不同。设置键 `appearance.theme`（仍写 viewer_settings）。`init()` 读设置 → 应用 → 订阅系统变化；`setMode()` 立即生效并持久化；`dispose()` 退订。
+- `App.vue` 挂载时 `theme.init()`：`index.html` 里的 `<html class="dark">` **只是首屏默认值**，用户选过的"亮色/跟随系统"必须在挂载后接管（否则刷新会闪回暗色）。
+- 设置页新增「外观」卡片（暗色/亮色/跟随系统三选）。
+- 浮层背景抽成全局变量 `--viewer-overlay-bg`（暗 rgba(15,17,21,.72) / 亮 rgba(255,255,255,.86)，定义在 src/style.css 的 `:root` 与 `html:not(.dark)`）。
+
+【用户确认的取舍（重要，不要再改回）】**UI 跟随明暗，3D 视口底色不跟随**：视口背景仍由「显示 → 背景」控制并默认深色，理由是与主流三维软件（Blender/Maya）一致、深色更利于判断形体与材质。因此 `Viewer.vue` 的 `#1b1e24` 与 `ModelCanvas.vue` 的棋盘格 `#22262d/#333941` **保持硬编码深色**，刻意不接入主题。信息 HUD 保持用户指定的 **0.3 透明度**，亮色下只换成浅色半透明底（新增 `html:not(.dark) .info-hud__panel/.info-hud__chip` 规则）。
+
+【顺带修正】设置页「关于」卡片过期信息（原写"0.1.0（M1 里程碑）"并把已完成的格式/光照/动画列为"计划中"），已更新为当前真实能力清单。
+
+【待办】设计文档 §21 与 README **尚未**补明暗主题一节（本轮优先保证代码与测试闭环）；下次继续时补齐，或与 M6 章节一并写。
 
 ## 经验教训 Lessons Learned
 
