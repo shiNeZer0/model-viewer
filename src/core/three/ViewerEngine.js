@@ -19,6 +19,7 @@ import {
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js'
 
+import { resolveExportRatio } from '../screenshot.js'
 import { BoundingBoxOverlay } from './boundingBox.js'
 import { AnimationController, MAX_FRAME_DELTA } from './animation.js'
 import { disposeObject3D } from './disposal.js'
@@ -344,6 +345,51 @@ export class ViewerEngine {
   renderNow() {
     if (!this.loop.running) this.renderFrame()
     this.noteActivity()
+  }
+
+  /**
+   * 截图：按导出倍数重渲一帧并立刻读回像素，返回 data URL（失败返回 null）。
+   *
+   * 两个"必须这么写"的理由：
+   * 1. 渲染器没有开 `preserveDrawingBuffer`（开了会持续占用一份额外缓冲），
+   *    浏览器可能在合成之后清空绘制缓冲区，因此「渲染」与「toDataURL」必须在**同一个同步任务**里完成；
+   * 2. 通过临时调高像素比来提分辨率，后处理（EffectComposer）会一起按新尺寸出图，
+   *    不必再写一条离屏读取逻辑——否则直渲与后处理两条路径很容易出图不一致。
+   *
+   * 注意：CSS2D 的尺寸标注、信息 HUD、动画控制条都是 DOM 覆盖层，**不会**出现在截图里
+   * （截图是纯 3D 画面，这也是导出图片时通常期望的行为）。
+   */
+  captureImage({ scale = 2, type = 'image/png', quality } = {}) {
+    if (this.disposed || !this.canvas) return null
+
+    const width = Math.max(this.container.clientWidth, 1)
+    const height = Math.max(this.container.clientHeight, 1)
+    const baseRatio = Math.min(window.devicePixelRatio || 1, this.maxPixelRatio)
+    const exportRatio = resolveExportRatio({ baseRatio, scale, width, height })
+
+    try {
+      if (exportRatio !== baseRatio) {
+        this.renderer.setPixelRatio(exportRatio)
+        this.renderer.setSize(width, height, false)
+        this.postFx.setSize(width, height, exportRatio)
+      }
+      this.renderFrame()
+      const dataUrl = this.canvas.toDataURL(type, quality)
+      console.info(
+        `[ViewerEngine] 截图完成: ${width}×${height} @${exportRatio}x → ${Math.round(dataUrl.length / 1024)} KB`,
+      )
+      return dataUrl
+    } catch (error) {
+      console.error('[ViewerEngine] 截图失败', error)
+      return null
+    } finally {
+      // 恢复显示用的像素比并立刻重绘：否则画布会停在导出分辨率上
+      if (exportRatio !== baseRatio) {
+        this.handleResize()
+        this.renderFrame()
+      }
+      this.noteActivity()
+    }
   }
 
   sampleFps() {

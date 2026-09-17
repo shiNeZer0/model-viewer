@@ -32,6 +32,23 @@
       </template>
     </el-dropdown>
 
+    <el-dropdown :disabled="!hasModel" @command="emit('screenshot', Number($event))">
+      <el-button :disabled="!hasModel">
+        截图<span class="viewer-toolbar__caret">▾</span>
+      </el-button>
+      <template #dropdown>
+        <el-dropdown-menu>
+          <el-dropdown-item
+            v-for="option in SCREENSHOT_SCALES"
+            :key="option.id"
+            :command="option.value"
+          >
+            {{ option.label }}
+          </el-dropdown-item>
+        </el-dropdown-menu>
+      </template>
+    </el-dropdown>
+
     <slot name="recent" />
 
     <div class="viewer-toolbar__spacer" />
@@ -54,6 +71,7 @@
 <script setup>
 import { computed } from 'vue'
 
+import { SCREENSHOT_SCALES } from '../../core/screenshot.js'
 import { SHADE_MODES, resolveShadeMode } from '../../core/three/shadeModes.js'
 import { VIEW_PRESETS, resolveViewPreset } from '../../core/three/viewPresets.js'
 
@@ -72,6 +90,7 @@ const emit = defineEmits([
   'update:autoRotate',
   'view-preset',
   'shading-mode',
+  'screenshot',
   'settings',
 ])
 

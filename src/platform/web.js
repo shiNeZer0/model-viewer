@@ -77,6 +77,42 @@ export function createLocalPathConverter() {
   return null
 }
 
+/* ------------------------------- 截图（M6-4） ------------------------------- */
+
+/** 浏览器没有另存为对话框（下载位置由浏览器/用户设置决定），返回 null */
+export async function pickSavePath() {
+  return null
+}
+
+/** Web 端没有"图片目录"概念，直接用文件名（浏览器会落到下载目录） */
+export async function suggestedSavePath(fileName) {
+  return fileName
+}
+
+/**
+ * 触发下载。
+ * 用 blob URL 而不是直接把 data URL 塞给 `<a href>`：几 MB 的 data URL 在部分浏览器上
+ * 会被当作导航而不是下载，blob 更稳；用完立刻释放，避免长期占内存。
+ */
+export function downloadScreenshot({ fileName, dataUrl }) {
+  const base64 = String(dataUrl).split(',')[1] ?? ''
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+
+  const blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }))
+  const link = document.createElement('a')
+  link.href = blobUrl
+  link.download = fileName
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  // 交给浏览器读取后即可释放
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000)
+
+  return { path: fileName, bytes: bytes.length }
+}
+
 /**
  * 订阅 HTML5 拖放（仅 Web 端使用；桌面端由原生事件提供路径）。
  * @param {HTMLElement} target 拖放目标元素

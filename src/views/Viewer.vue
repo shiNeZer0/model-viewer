@@ -12,6 +12,7 @@
         @reset="onResetView"
         @view-preset="onViewPreset"
         @shading-mode="display.update('shadingMode', $event)"
+        @screenshot="onScreenshot"
         @update:auto-rotate="settings.setAutoRotate"
         @settings="router.push('/settings')"
       >
@@ -140,8 +141,9 @@ import InfoHud from '../components/viewer/InfoHud.vue'
 import ModelCanvas from '../components/viewer/ModelCanvas.vue'
 import { useHotkeys } from '../composables/useHotkeys.js'
 import { useModelOpen } from '../composables/useModelOpen.js'
+import { DEFAULT_SCREENSHOT_SCALE, buildScreenshotFileName } from '../core/screenshot.js'
 import { DEFAULT_VIEW_PRESET, VIEW_PRESETS } from '../core/three/viewPresets.js'
-import { capabilities } from '../platform/index.js'
+import { capabilities, saveScreenshot } from '../platform/index.js'
 import { useAnimationStore } from '../stores/animationStore.js'
 import { useDisplayStore } from '../stores/displayStore.js'
 import { useLightingStore } from '../stores/lightingStore.js'
@@ -149,6 +151,7 @@ import { useModelStore } from '../stores/modelStore.js'
 import { useRecentStore } from '../stores/recentStore.js'
 import { useSettingsStore } from '../stores/settingsStore.js'
 import { formatCount } from '../utils/format.js'
+import { describeError } from '../utils/error-messages.js'
 
 const router = useRouter()
 const model = useModelStore()
@@ -187,6 +190,35 @@ const treeTabLabel = computed(() =>
 function onOpenRecent(path) {
   recentMenuOpen.value = false
   void openRecentPath(path)
+}
+
+/* --------------------------- 截图导出（M6-4） --------------------------- */
+
+/**
+ * 截图：先同步取像素（必须在同一任务里渲染+读取），再交给平台层保存。
+ * 顺序不能反——先弹另存为对话框的话，等用户选完路径时绘制缓冲区可能已经被清空了。
+ */
+async function onScreenshot(scale = DEFAULT_SCREENSHOT_SCALE) {
+  const engine = engineRef.value
+  if (!engine) {
+    ElMessage.warning('渲染器尚未就绪，请稍后重试')
+    return
+  }
+
+  const dataUrl = engine.captureImage({ scale })
+  if (!dataUrl) {
+    ElMessage.error('截图失败：渲染器没有返回图像数据')
+    return
+  }
+
+  try {
+    const fileName = buildScreenshotFileName({ fileName: model.fileName, scale })
+    const result = await saveScreenshot({ dataUrl, fileName })
+    if (result.cancelled) return
+    ElMessage.success(`截图已保存：${result.path}`)
+  } catch (error) {
+    ElMessage.error(describeError(error))
+  }
 }
 
 onMounted(async () => {
@@ -313,6 +345,7 @@ useHotkeys(
       display.update('shadingMode', next)
     },
     b: () => display.update('showBoundingBox', !display.showBoundingBox),
+    s: () => onScreenshot(DEFAULT_SCREENSHOT_SCALE),
     i: () => {
       showInfoHud.value = !showInfoHud.value
     },

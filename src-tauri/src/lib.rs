@@ -62,6 +62,7 @@ pub fn run() {
             commands::asset::allow_asset_paths,
             commands::asset::list_asset_grants,
             commands::asset::revoke_asset_grants,
+            commands::screenshot::save_screenshot,
         ])
         .setup(|_app| {
             log::info!("model-viewer app initialised");

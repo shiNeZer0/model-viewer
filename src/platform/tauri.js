@@ -6,8 +6,9 @@
  */
 
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
+import { pictureDir, join } from '@tauri-apps/api/path'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { open } from '@tauri-apps/plugin-dialog'
+import { open, save } from '@tauri-apps/plugin-dialog'
 
 import { OPEN_DIALOG_FILTERS } from '../constants/formats.js'
 
@@ -71,4 +72,26 @@ export async function subscribeNativeDrop(handler) {
  */
 export function createAssetMap() {
   return { map: new Map(), revokeAll: () => {} }
+}
+
+/* ------------------------------- 截图（M6-4） ------------------------------- */
+
+/** 另存为对话框；取消时返回 null */
+export async function pickSavePath({ defaultPath, filters } = {}) {
+  return save({ title: '保存截图', defaultPath, filters })
+}
+
+/** 建议的默认保存位置：系统图片目录（取不到就只给文件名，由对话框用默认目录） */
+export async function suggestedSavePath(fileName) {
+  try {
+    return await join(await pictureDir(), fileName)
+  } catch (error) {
+    console.warn('[tauri] 取图片目录失败，改用系统默认目录', error)
+    return fileName
+  }
+}
+
+/** 把 base64 的 PNG 交给 Rust 写盘（前端不碰 fs，写盘约束收在命令里） */
+export function saveScreenshotFile({ path, base64 }) {
+  return invoke('save_screenshot', { path, base64 })
 }

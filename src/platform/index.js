@@ -7,6 +7,7 @@
  */
 
 import { resolveFormatByName } from '../constants/formats.js'
+import { dataUrlMimeType, stripDataUrlPrefix } from '../core/screenshot.js'
 import { describeError, splitErrorCode } from '../utils/error-messages.js'
 import { capabilities, isTauri, runtime, RUNTIME } from './runtime.js'
 import { createModelSource, fileNameOf, syntheticId } from './sources.js'
@@ -181,7 +182,6 @@ export async function revokeGrants() {
 export { describeError }
 
 /* ------------------------- 贴图引用的路径转换器（M6-3） ------------------------- */
-
 let localPathConverterPromise = null
 
 /**
@@ -205,4 +205,41 @@ export async function ensureLocalPathConverter() {
       })
   }
   return localPathConverterPromise
+}
+
+/* ------------------------------ 截图导出（M6-4） ------------------------------ */
+
+/**
+ * 保存截图。
+ *
+ * 桌面端：另存为对话框（默认落到系统图片目录）→ Rust 命令写盘（前端不碰 fs）；
+ * Web 端：直接触发浏览器下载（下载目录由浏览器决定，没有对话框可弹）。
+ *
+ * @param {{dataUrl: string, fileName: string}} options
+ * @returns {Promise<{saved: boolean, cancelled?: boolean, path?: string, bytes?: number}>}
+ */
+export async function saveScreenshot({ dataUrl, fileName }) {
+  if (typeof dataUrl !== 'string' || !dataUrl) {
+    throw new Error('SCREENSHOT_NO_DATA: 渲染器返回为空')
+  }
+  if (dataUrlMimeType(dataUrl) !== 'image/png') {
+    throw new Error(`SCREENSHOT_NO_DATA: 期望 image/png，实际为 ${dataUrlMimeType(dataUrl) || '未知'}`)
+  }
+
+  if (isTauri) {
+    const backend = await loadTauriBackend()
+    const defaultPath = await backend.suggestedSavePath(fileName)
+    const path = await backend.pickSavePath({
+      defaultPath,
+      filters: [{ name: 'PNG 图片', extensions: ['png'] }],
+    })
+    if (!path) return { saved: false, cancelled: true }
+
+    const saved = await backend.saveScreenshotFile({ path, base64: stripDataUrlPrefix(dataUrl) })
+    return { saved: true, path: saved.path, bytes: saved.bytes }
+  }
+
+  const backend = await loadWebBackend()
+  const saved = backend.downloadScreenshot({ fileName, dataUrl })
+  return { saved: true, path: saved.path, bytes: saved.bytes }
 }
