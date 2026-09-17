@@ -137,4 +137,47 @@ describe('displayStore 快照', () => {
     expect(display.toEngineSettings.showGrid).toBe(false)
     expect(display.toEngineSettings.showAxes).toBe(true)
   })
+
+  it('M6-2：模型轴向默认 auto，切换到 z-up / keep 会进入引擎快照', async () => {
+    const display = useDisplayStore()
+    expect(display.toEngineSettings.upAxis).toBe('auto')
+
+    await display.update('upAxis', 'z-up', { persist: false })
+    expect(display.toEngineSettings.upAxis).toBe('z-up')
+
+    await display.update('upAxis', 'keep', { persist: false })
+    expect(display.toEngineSettings.upAxis).toBe('keep')
+  })
+
+  it('M6-2：非法轴向被拒绝，不会污染引擎快照', async () => {
+    const display = useDisplayStore()
+    await display.update('upAxis', 'y-up', { persist: false })
+    await display.update('upAxis', null, { persist: false })
+    expect(display.toEngineSettings.upAxis).toBe('auto')
+
+    await display.update('upAxis', 'z-up', { persist: false })
+    await display.update('upAxis', 'bogus', { persist: false })
+    expect(display.toEngineSettings.upAxis).toBe('z-up')
+  })
+
+  it('M6-2：轴向变化会让快照变化（引擎据此重算姿态、摆放与相机）', async () => {
+    const display = useDisplayStore()
+    const seen = []
+    const snapshot = computed(() => display.toEngineSettings)
+    watch(snapshot, (value) => seen.push(value.upAxis))
+
+    await display.update('upAxis', 'z-up', { persist: false })
+    await nextTick()
+    expect(seen).toEqual(['z-up'])
+  })
+
+  it('M6-2：resetToDefaults 把轴向恢复到 auto；设置键已登记', async () => {
+    const display = useDisplayStore()
+    await display.update('upAxis', 'z-up', { persist: false })
+    // 恢复默认时 DisplayPanel 会遍历 SETTING_KEYS 逐个回写，键必须存在
+    expect(display.SETTING_KEYS.upAxis).toBe('display.upAxis')
+
+    display.resetToDefaults()
+    expect(display.toEngineSettings.upAxis).toBe('auto')
+  })
 })

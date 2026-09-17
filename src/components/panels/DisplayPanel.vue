@@ -73,9 +73,24 @@
       </el-form-item>
     </el-form>
 
-    <el-divider content-position="left">模型放置</el-divider>
+    <el-divider content-position="left">模型放置与轴向</el-divider>
 
     <el-form label-width="88px" label-position="left" size="small">
+      <el-form-item label="模型轴向">
+        <el-select
+          :model-value="display.upAxis"
+          style="width: 100%"
+          @update:model-value="display.update('upAxis', $event)"
+        >
+          <el-option
+            v-for="mode in UP_AXIS_MODES"
+            :key="mode.id"
+            :label="mode.label"
+            :value="mode.id"
+          />
+        </el-select>
+      </el-form-item>
+
       <el-form-item label="居中到原点">
         <el-switch
           :model-value="display.centerModel"
@@ -96,9 +111,11 @@
     <p class="display-panel__footnote">
       摆放只是显示用的归一化：仅移动模型在场景中的位置，不会修改模型文件里的原始坐标。
       关掉开关即可查看模型自带的真实坐标。
+      「模型轴向」用于修正文件自身的朝上轴（3MF 规范为 Z-up，FBX 视导出器而定）：
+      切换后会重新计算包围盒与相机，尺寸、贴地与视图都按新姿态给出。
     </p>
 
-    <el-divider content-position="left">光照与色调（M3 会扩展为完整光照系统）</el-divider>
+    <el-divider content-position="left">后处理与色调</el-divider>
 
     <el-form label-width="88px" label-position="left" size="small">
       <el-form-item label="后处理">
@@ -156,6 +173,7 @@
 </template>
 
 <script setup>
+import { UP_AXIS_MODES } from '../../core/three/orientation.js'
 import {
   EXPOSURE_RANGE,
   SATURATION_RANGE,

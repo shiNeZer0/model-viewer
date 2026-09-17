@@ -9,6 +9,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
 import { DEFAULT_IDLE_MS } from '../core/three/idlePolicy.js'
+import { DEFAULT_UP_AXIS, resolveUpAxisMode } from '../core/three/orientation.js'
 import { DEFAULT_SATURATION, normalizePostFxSettings } from '../core/three/postfx.js'
 import { DEFAULT_SHADE_MODE, resolveShadeMode } from '../core/three/shadeModes.js'
 import {
@@ -45,6 +46,7 @@ const SETTING_KEYS = {
   saturation: 'display.saturation',
   postFxEnabled: 'display.postFxEnabled',
   idleMs: 'perf.idleMs',
+  upAxis: 'display.upAxis',
 }
 
 const HEX_COLOR = /^#[0-9a-f]{6}$/i
@@ -65,6 +67,8 @@ export const useDisplayStore = defineStore('display', () => {
   const centerModel = ref(true)
   /** 模型摆放：底部对齐地面（y=0） */
   const alignToGround = ref(true)
+  /** 模型轴向覆盖：auto（仅 3MF 自动转）/ keep / z-up；非法值由 update 拒绝 */
+  const upAxis = ref(DEFAULT_UP_AXIS)
   /** M2：边界框与尺寸标注 */
   const showBoundingBox = ref(false)
   /** 模型原始数值的单位（raw = 不换算） */
@@ -95,6 +99,7 @@ export const useDisplayStore = defineStore('display', () => {
     showAxes: showAxes.value,
     centerModel: centerModel.value,
     alignToGround: alignToGround.value,
+    upAxis: upAxis.value,
     showBoundingBox: showBoundingBox.value,
     sourceUnit: sourceUnit.value,
     displayUnit: displayUnit.value,
@@ -146,6 +151,9 @@ export const useDisplayStore = defineStore('display', () => {
       }
       if (typeof saved[SETTING_KEYS.alignToGround] === 'boolean') {
         alignToGround.value = saved[SETTING_KEYS.alignToGround]
+      }
+      if (resolveUpAxisMode(saved[SETTING_KEYS.upAxis])) {
+        upAxis.value = saved[SETTING_KEYS.upAxis]
       }
       if (typeof saved[SETTING_KEYS.showBoundingBox] === 'boolean') {
         showBoundingBox.value = saved[SETTING_KEYS.showBoundingBox]
@@ -227,6 +235,10 @@ export const useDisplayStore = defineStore('display', () => {
       case 'alignToGround':
         alignToGround.value = Boolean(value)
         break
+      case 'upAxis':
+        if (!resolveUpAxisMode(value)) return
+        upAxis.value = value
+        break
       case 'showBoundingBox':
         showBoundingBox.value = Boolean(value)
         break
@@ -274,6 +286,7 @@ export const useDisplayStore = defineStore('display', () => {
     showAxes.value = true
     centerModel.value = true
     alignToGround.value = true
+    upAxis.value = DEFAULT_UP_AXIS
     showBoundingBox.value = false
     sourceUnit.value = DEFAULT_SOURCE_UNIT
     displayUnit.value = DEFAULT_DISPLAY_UNIT
@@ -295,6 +308,7 @@ export const useDisplayStore = defineStore('display', () => {
     showAxes,
     centerModel,
     alignToGround,
+    upAxis,
     showBoundingBox,
     sourceUnit,
     displayUnit,

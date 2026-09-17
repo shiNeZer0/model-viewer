@@ -1,4 +1,4 @@
-import { Object3D, Vector3 } from 'three'
+import { Box3, BoxGeometry, Mesh, MeshBasicMaterial, Object3D, Vector3 } from 'three'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -125,5 +125,52 @@ describe('ModelOrientation', () => {
 
   it('缺少对象时立即报错', () => {
     expect(() => new ModelOrientation(null)).toThrow()
+  })
+})
+
+describe('轴向修正 + 摆放的组合语义（引擎切换 upAxis 时依赖它）', () => {
+  /** 造一个"高瘦"的 Z-up 盒子：Z 方向最长，转换后应变成 Y 方向最长 */
+  function createZUpBox() {
+    const root = new Object3D()
+    const mesh = new Mesh(new BoxGeometry(1, 2, 4), new MeshBasicMaterial())
+    root.add(mesh)
+    root.updateMatrixWorld(true)
+    return root
+  }
+
+  it('切成 z-up 后包围盒的 Y/Z 尺寸互换（尺寸、贴地与相机都跟着变）', () => {
+    const root = createZUpBox()
+
+    const before = new Box3().setFromObject(root)
+    const beforeSize = before.getSize(new Vector3())
+
+    const orientation = new ModelOrientation(root)
+    expect(orientation.apply({ upAxis: 'z-up', formatId: 'fbx' })).toBe(true)
+
+    const afterSize = new Box3().setFromObject(root).getSize(new Vector3())
+    expect(afterSize.y).toBeCloseTo(beforeSize.z, 5)
+    expect(afterSize.z).toBeCloseTo(beforeSize.y, 5)
+    expect(afterSize.x).toBeCloseTo(beforeSize.x, 5)
+  })
+
+  it('在 keep / z-up / auto 之间反复切换：尺寸始终与目标模式一致，不累积旋转', () => {
+    const root = createZUpBox()
+    const orientation = new ModelOrientation(root)
+
+    const originalSize = new Box3().setFromObject(root).getSize(new Vector3()).clone()
+
+    const sequence = ['keep', 'z-up', 'auto', 'z-up', 'keep', 'auto', 'keep']
+    for (const upAxis of sequence) {
+      orientation.apply({ upAxis, formatId: 'fbx' })
+      const size = new Box3().setFromObject(root).getSize(new Vector3())
+      if (upAxis === 'keep' || upAxis === 'auto') {
+        // auto 对 FBX 不猜（只有 3MF 自动转），因此与 keep 等价
+        expect(size.y).toBeCloseTo(originalSize.y, 5)
+        expect(size.z).toBeCloseTo(originalSize.z, 5)
+      } else {
+        expect(size.y).toBeCloseTo(originalSize.z, 5)
+        expect(size.z).toBeCloseTo(originalSize.y, 5)
+      }
+    }
   })
 })

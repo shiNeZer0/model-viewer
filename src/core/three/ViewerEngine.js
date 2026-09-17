@@ -27,7 +27,7 @@ import { buildHierarchy } from './hierarchy.js'
 import { DEFAULT_IDLE_MS, createIdlePolicy, hasContinuousWork } from './idlePolicy.js'
 import { LightingRig, createDefaultLightingState, normalizeLightingState } from './lighting.js'
 import { ModelPlacement } from './modelPlacement.js'
-import { createUpAxisQuaternion, shouldConvertUpAxis } from './orientation.js'
+import { ModelOrientation } from './orientation.js'
 import { PostFx, normalizePostFxSettings } from './postfx.js'
 import { createRenderLoop } from './renderLoop.js'
 import { DEFAULT_SHADE_MODE, ShadeController, hidesSolid } from './shadeModes.js'
@@ -57,6 +57,10 @@ export class ViewerEngine {
     this.shadeController = null
     /** 当前模型的摆放控制器（居中/贴地），随模型切换而重建 */
     this.placement = null
+    /** 当前模型的轴向修正器：记住模型自带姿态，用户切换 upAxis 时从原始值重算 */
+    this.orientation = null
+    /** 当前模型的格式 id（auto 模式判断是否按 Z-up 处理时要用） */
+    this.formatId = ''
     /** 用户通过层级树手动设置的可见性（覆盖模型原始值） */
     this.visibilityOverrides = new Map()
     /** 模型自带的原始可见性 */
@@ -406,11 +410,16 @@ export class ViewerEngine {
     }
 
     // 摆放设置变化 → 重新归一化（网格与相机一并刷新）
-    if (
-      this.currentRoot &&
-      (this.display.centerModel !== previous.centerModel ||
-        this.display.alignToGround !== previous.alignToGround)
-    ) {
+    const layoutChanged =
+      this.display.centerModel !== previous.centerModel ||
+      this.display.alignToGround !== previous.alignToGround
+    // 轴向覆盖变化：姿态必须先改，再统一重做摆放 —— 包围盒、尺寸标注与相机都依赖姿态
+    const orientationChanged = this.display.upAxis !== previous.upAxis
+
+    if (this.currentRoot && orientationChanged && this.orientation) {
+      this.orientation.apply({ upAxis: this.display.upAxis, formatId: this.formatId })
+    }
+    if (this.currentRoot && (layoutChanged || orientationChanged)) {
       this.reapplyPlacement()
     }
 
@@ -560,11 +569,11 @@ export class ViewerEngine {
     if (this.currentRoot) {
       this.scene.add(this.currentRoot)
       // 轴向修正必须在"量包围盒"之前：否则尺寸、贴地与相机适配会全部跟着错
-      // （3MF 规范是 Z-up；其它格式按 auto 保持原样，手动覆盖留待 M6）
-      if (shouldConvertUpAxis({ upAxis: this.display.upAxis, formatId })) {
-        this.currentRoot.quaternion.premultiply(createUpAxisQuaternion())
-        this.currentRoot.updateMatrixWorld(true)
-      }
+      // （3MF 规范是 Z-up；其它格式按 auto 保持原样）。
+      // 用 ModelOrientation 记住模型自带的原始姿态：之后用户在显示面板切换轴向时从原始值重算，不累积旋转。
+      this.formatId = formatId
+      this.orientation = new ModelOrientation(this.currentRoot)
+      this.orientation.apply({ upAxis: this.display.upAxis, formatId })
       this.placement = new ModelPlacement(this.currentRoot)
       this.shadeController = new ShadeController(this.currentRoot)
       this.originalVisibility = captureVisibility(this.currentRoot)
@@ -600,6 +609,8 @@ export class ViewerEngine {
     } else {
       this.lastBox = null
       this.placement = null
+      this.orientation = null
+      this.formatId = ''
       this.hierarchy = { nodes: [], nodeById: new Map(), count: 0, truncated: false }
       this.visibilityOverrides = new Map()
       this.originalVisibility = new Map()
