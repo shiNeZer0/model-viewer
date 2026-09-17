@@ -13,6 +13,7 @@ import { Group, LoadingManager, Mesh } from 'three'
 import { resolveFormatById } from '../../constants/formats.js'
 import { rawErrorMessage } from '../../utils/error-messages.js'
 import { disposeObject3D } from './disposal.js'
+import { EXTRA_FORMAT_LOADERS } from './formatLoaders.js'
 import { createDefaultMaterial } from './materialNormalizer.js'
 import { resolveAssetUrl } from './url-rewrite.js'
 
@@ -158,10 +159,14 @@ export async function loadModel({
 
   let result
   try {
-    result =
-      format.id === 'stl'
-        ? await loadStl({ manager, url, onFileProgress })
-        : await loadGltf({ manager, renderer, url, onFileProgress })
+    if (format.id === 'stl') {
+      result = await loadStl({ manager, url, onFileProgress })
+    } else if (EXTRA_FORMAT_LOADERS[format.id]) {
+      // M5：FBX / OBJ(+MTL) / PLY / 3MF（这三个 loader 自带格式特有的兜底与提示）
+      result = await EXTRA_FORMAT_LOADERS[format.id]({ manager, url, renderer })
+    } else {
+      result = await loadGltf({ manager, renderer, url, onFileProgress })
+    }
   } catch (error) {
     throw new Error(`LOAD_FAILED: ${rawErrorMessage(error)}`)
   }

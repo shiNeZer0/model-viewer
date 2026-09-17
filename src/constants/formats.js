@@ -13,10 +13,10 @@ export const MODEL_FORMATS = [
   { id: 'glb', label: 'glTF 二进制（GLB）', extensions: ['glb'], multiFile: false, loadable: true },
   { id: 'gltf', label: 'glTF（GLTF + 外部资源）', extensions: ['gltf'], multiFile: true, loadable: true },
   { id: 'stl', label: 'STL（立体光刻）', extensions: ['stl'], multiFile: false, loadable: true },
-  { id: 'fbx', label: 'FBX', extensions: ['fbx'], multiFile: true, loadable: false },
-  { id: 'obj', label: 'Wavefront OBJ（+ MTL）', extensions: ['obj'], multiFile: true, loadable: false },
-  { id: 'ply', label: 'Stanford PLY', extensions: ['ply'], multiFile: false, loadable: false },
-  { id: '3mf', label: '3D Manufacturing Format（3MF）', extensions: ['3mf'], multiFile: false, loadable: false },
+  { id: 'fbx', label: 'FBX', extensions: ['fbx'], multiFile: true, loadable: true },
+  { id: 'obj', label: 'Wavefront OBJ（+ MTL）', extensions: ['obj'], multiFile: true, loadable: true },
+  { id: 'ply', label: 'Stanford PLY', extensions: ['ply'], multiFile: false, loadable: true },
+  { id: '3mf', label: '3D Manufacturing Format（3MF）', extensions: ['3mf'], multiFile: false, loadable: true },
 ]
 
 /** 所有受支持的扩展名（小写，不带点） */

@@ -105,6 +105,23 @@
 【范围调整】HDR/EXR 导入移到 M6：需要第二条文件选取链路（平台层要支持非模型扩展名的过滤与授权），且主题引用自定义 HDR 的可复现性需要决策（桌面端复制进应用数据目录 / Web 端 blob 无法跨会话）。接入点 EnvironmentManager.applyEquirectangularTexture 已就绪，文档 §18.4 有记录。
 
 【验证】vitest 244/244（25 文件）、cargo 24/24、pnpm build 通过。GUI 验收（预设切换观感、主题保存/应用、环境贴图当背景）待用户在本机 pnpm dev 确认。
+- [2026-09-17 09:10] [工作记录] model-viewer M4 完成：动画片段选择与播放控制（真实 mixer 确定性单测，269 全绿） — E:\AI-Coding\model-viewer 的 M4 里程碑（动画片段选择与播放控制）已完成并提交（commit 29af9e7，工作区干净）。
+
+【新增 core/three/animation.js（可单测）】
+- AnimationController：封装 AnimationMixer + 每片段 action 缓存（clipAction 按 clip 对象缓存，切换片段时停住前一个）。
+- 状态机约定（UI 语义依赖它，改动前先看这里）：① 选中片段后**停在 0 秒并暂停**，并立即 `mixer.update(0)` 应用第 0 帧姿势（否则模型停在上一段的姿势）；② `停止` = `action.stop()`（three 的 stop 会 reset：time=0 且 paused=false）**再显式 paused=true 且 time=0**，语义是"回到起点并暂停"，不是恢复绑定姿势；③ `播放一次`（LoopOnce + clampWhenFinished）播完时 three 会把 action 置 paused，据此判定 `finished`，重播时先 reset 再放行；④ `seekNormalized` 设 action.time 后必须 `mixer.update(0)` 才会刷新姿势，且会置 paused（拖动 = 暂停定位）。
+- 纯函数：describeClips（无名片段给"片段 N"占位名）、formatClipDuration（<60s 用秒，否则 分+秒）、timeToNormalized/normalizedToTime（duration=0 返回 0，不产生 NaN）、normalizeSpeed（0.1~4）、normalizeLoopMode（非法回退 repeat）、MAX_FRAME_DELTA=0.1。
+
+【引擎接线】setModel(root, { animations }) —— **只有 loadable 片段非空才创建控制器**；控制器必须先于 disposeObject3D 释放（否则 mixer 继续引用已销毁节点）；onFrame 内 `delta = min(now-lastFrameTime, MAX_FRAME_DELTA)` 后推进（空闲唤醒时 delta 可达数秒，不夹取会跳帧）；新增 getAnimationClips/getAnimationState/selectAnimationClip/playAnimation/pauseAnimation/stopAnimation/seekAnimation/setAnimationSpeed/setAnimationLoopMode 与 emitAnimationState。
+- 回写节流：离散变化（playing/finished/clipId）立即回写，连续时间约 10Hz（100ms），否则播放中每帧都会触发 Vue 重渲染。
+- animationPlaying 每帧从控制器状态同步 → hasContinuousWork 保持持续渲染；暂停后自动回到空闲停渲染。
+
+【状态与 UI】src/stores/animationStore.js（纯数据：clips/clipId/playing/finished/time/duration/speed/loopMode + applyState 单一同步入口 + reset 保留用户偏好）；AnimationPanel.vue（片段下拉带时长、播放/暂停/停止、时间轴显示"当前/总长"、倍速滑杆标出常用档、循环模式三选、无动画空态说明纯几何格式不含动画）；偏好键 animation.speed / animation.loopMode 持久化（**时间轴位置刻意不落库**）。
+- 偏好同步方向：ModelCanvas 的 watch 监听 store 的 [speed, loopMode] 单向推给引擎 → 同时覆盖"用户修改"与"设置刚从数据库读回"两条路径，且引擎把偏好缓存下来供下一个模型使用。
+
+【验证策略】three 的动画系统不依赖 WebGL，因此用真实 AnimationMixer + AnimationClip（VectorKeyframeTrack('.position')，x 在 2 秒内 0→10→0）做**确定性数值断言**：t=0.5 时 x≈5；2× 倍速下 delta 0.25 前进 0.5s；暂停后不前进；停止归零；seekNormalized(0.75)→time 1.5 且 x≈5；越界夹取；once 播完 finished 且重播从头；loop 写回 action；按名称选片段；非法目标不改选中；多片段切换停住前一段；无片段时全部操作安全返回。
+
+【结果】vitest 269/269（27 文件）、cargo 24/24、pnpm build 通过。GUI 验收（真实带动画模型播放、拖时间轴、倍速、循环模式）待用户在本机确认。
 
 ## 经验教训 Lessons Learned
 

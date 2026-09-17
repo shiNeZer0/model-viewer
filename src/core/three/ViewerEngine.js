@@ -27,6 +27,7 @@ import { buildHierarchy } from './hierarchy.js'
 import { DEFAULT_IDLE_MS, createIdlePolicy, hasContinuousWork } from './idlePolicy.js'
 import { LightingRig, createDefaultLightingState, normalizeLightingState } from './lighting.js'
 import { ModelPlacement } from './modelPlacement.js'
+import { createUpAxisQuaternion, shouldConvertUpAxis } from './orientation.js'
 import { PostFx, normalizePostFxSettings } from './postfx.js'
 import { createRenderLoop } from './renderLoop.js'
 import { DEFAULT_SHADE_MODE, ShadeController, hidesSolid } from './shadeModes.js'
@@ -527,7 +528,7 @@ export class ViewerEngine {
    * 替换当前模型，并释放上一个模型占用的 GPU 资源。
    * @returns {{disposal: object|null, fit: object|null, shadeWarnings: string[]}}
    */
-  setModel(root, { fit = true, presetId, animations = [] } = {}) {
+  setModel(root, { fit = true, presetId, animations = [], formatId = '' } = {}) {
     let disposal = null
     if (this.currentRoot) {
       this.scene.remove(this.currentRoot)
@@ -551,6 +552,12 @@ export class ViewerEngine {
 
     if (this.currentRoot) {
       this.scene.add(this.currentRoot)
+      // 轴向修正必须在"量包围盒"之前：否则尺寸、贴地与相机适配会全部跟着错
+      // （3MF 规范是 Z-up；其它格式按 auto 保持原样，手动覆盖留待 M6）
+      if (shouldConvertUpAxis({ upAxis: this.display.upAxis, formatId })) {
+        this.currentRoot.quaternion.premultiply(createUpAxisQuaternion())
+        this.currentRoot.updateMatrixWorld(true)
+      }
       this.placement = new ModelPlacement(this.currentRoot)
       this.shadeController = new ShadeController(this.currentRoot)
       this.originalVisibility = captureVisibility(this.currentRoot)

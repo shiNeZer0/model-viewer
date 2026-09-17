@@ -85,9 +85,13 @@ export function useModelOpen(engineRef) {
         fit: true,
         // 动画片段交给引擎建 AnimationMixer（有动画才会创建控制器）
         animations: result.animations,
+        // 轴向修正需要知道格式（3MF 自动按 Z-up 处理）
+        formatId: source.loadFormatId,
       })
       const stats = collectModelStats(result.root, { animationCount: result.animations.length })
       model.setReady({ root: result.root, stats })
+      // loader 侧产生的提示（缺 MTL、3MF 单位说明等）一并展示
+      for (const warning of result.warnings ?? []) model.addWarning(warning)
       // 着色模式相关的提示（如「模型过大已跳过线框」）交给显示面板展示
       if (shadeWarnings?.length) display.setNotes(shadeWarnings)
 

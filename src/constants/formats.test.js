@@ -62,15 +62,14 @@ describe('resolveFormat*', () => {
     expect(resolveFormatById('unknown')).toBe(null)
   })
 
-  it('M0 只声明 glb/gltf/stl 可加载', () => {
-    expect(isLoadableFormat('glb')).toBe(true)
-    expect(isLoadableFormat('gltf')).toBe(true)
-    expect(isLoadableFormat('stl')).toBe(true)
-    // M5 补齐后用例会随之更新
-    expect(isLoadableFormat('fbx')).toBe(false)
-    expect(isLoadableFormat('obj')).toBe(false)
-    expect(isLoadableFormat('ply')).toBe(false)
-    expect(isLoadableFormat('3mf')).toBe(false)
+  it('M5 起七种格式全部可加载', () => {
+    // M0 只支持 glb/gltf/stl；M5 补齐了 fbx/obj/ply/3mf
+    for (const formatId of ['glb', 'gltf', 'stl', 'fbx', 'obj', 'ply', '3mf']) {
+      expect(isLoadableFormat(formatId), formatId).toBe(true)
+    }
+    expect(isLoadableFormat('unknown')).toBe(false)
+    // 每个格式都必须已实现 loader（ModelLoader 按 id 分派）
+    expect(MODEL_FORMATS.every((format) => format.loadable)).toBe(true)
   })
 
   it('isSupportedFileName 覆盖授权与加载的交集', () => {
