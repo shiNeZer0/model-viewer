@@ -9,6 +9,7 @@ import {
   computeLightPosition,
   createDefaultLightingState,
   createThemePayload,
+  degradeStaleImportedEnvironment,
   describeLightPositions,
   normalizeColor,
   normalizeLight,
@@ -101,6 +102,62 @@ describe('normalizeLightingState', () => {
 
   it('保留未知的 presetId（用户自定义主题用）', () => {
     expect(normalizeLightingState({ presetId: 'custom-1' }).presetId).toBe('custom-1')
+  })
+
+  it('M6-5：imported 是合法的环境来源，导入贴图的四个字段都被保留', () => {
+    const state = normalizeLightingState({
+      environment: {
+        source: 'imported',
+        customHdrName: 'studio.hdr',
+        customHdrUrl: 'asset://localhost/env/studio-abc.hdr',
+        customHdrPath: 'C:\\Users\\me\\.model-viewer\\app\\env\\studio-abc.hdr',
+        customHdrExtension: 'hdr',
+      },
+    })
+    expect(state.environment.source).toBe('imported')
+    expect(state.environment.customHdrName).toBe('studio.hdr')
+    expect(state.environment.customHdrPath).toContain('studio-abc.hdr')
+    expect(state.environment.customHdrExtension).toBe('hdr')
+  })
+
+  it('M6-5：导入字段的空值/非字符串一律收敛成 null', () => {
+    const state = normalizeLightingState({
+      environment: { source: 'imported', customHdrName: '', customHdrUrl: 42, customHdrPath: null },
+    })
+    expect(state.environment.customHdrName).toBeNull()
+    expect(state.environment.customHdrUrl).toBeNull()
+    expect(state.environment.customHdrPath).toBeNull()
+    expect(state.environment.customHdrExtension).toBeNull()
+  })
+})
+
+describe('degradeStaleImportedEnvironment（启动时的降级规则）', () => {
+  it('有应用数据目录副本 → 保持不变（可跨会话复现）', () => {
+    const environment = {
+      source: 'imported',
+      customHdrName: 'studio.hdr',
+      customHdrUrl: 'asset://localhost/x.hdr',
+      customHdrPath: 'C:\\app\\env\\studio-abc.hdr',
+    }
+    expect(degradeStaleImportedEnvironment(environment)).toEqual(environment)
+  })
+
+  it('没有副本（Web 端 blob 或副本被删）→ 退回渐变并清掉导入信息', () => {
+    const degraded = degradeStaleImportedEnvironment({
+      source: 'imported',
+      customHdrName: 'studio.hdr',
+      customHdrUrl: 'blob:http://localhost/dead',
+      customHdrPath: null,
+    })
+    expect(degraded.source).toBe('gradient')
+    expect(degraded.customHdrName).toBeNull()
+    expect(degraded.customHdrUrl).toBeNull()
+  })
+
+  it('非 imported 来源原样返回', () => {
+    const environment = { source: 'room' }
+    expect(degradeStaleImportedEnvironment(environment)).toBe(environment)
+    expect(degradeStaleImportedEnvironment(null)).toBeNull()
   })
 })
 

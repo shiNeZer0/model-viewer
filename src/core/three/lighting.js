@@ -74,6 +74,9 @@ export function normalizeLight(light = {}, role = 'key') {
   }
 }
 
+/** 环境来源：程序化渐变 / three 自带影棚 / 关闭 / 用户导入的 HDR、EXR */
+export const ENVIRONMENT_SOURCES = ['gradient', 'room', 'none', 'imported']
+
 /** 补全/收敛完整光照状态（按 key/fill/rim 顺序固定三盏） */
 export function normalizeLightingState(state = {}) {
   const preset = resolvePreset(state.presetId)
@@ -93,16 +96,43 @@ export function normalizeLightingState(state = {}) {
       return normalizeLight(source, role.id)
     }),
     environment: {
-      source: ['gradient', 'room', 'none'].includes(environmentSource.source)
+      source: ENVIRONMENT_SOURCES.includes(environmentSource.source)
         ? environmentSource.source
         : 'gradient',
       intensity: clamp(environmentSource.intensity, LIGHT_LIMITS.environmentIntensity, 1),
       topColor: normalizeColor(environmentSource.topColor, '#e8edf5'),
       horizonColor: normalizeColor(environmentSource.horizonColor, '#b9c3d1'),
       bottomColor: normalizeColor(environmentSource.bottomColor, '#3a3f48'),
-      // 用户导入的 HDR/EXR 只记录来源名，用于主题回显与提示（见文档已知限制）
-      customHdrName: typeof environmentSource.customHdrName === 'string' ? environmentSource.customHdrName : null,
+      // 用户导入的 HDR/EXR：名字用于回显；url 是本次运行可用的加载地址；
+      // path 是桌面端复制进应用数据目录的副本路径（跨会话复现靠它）；
+      // extension 决定用 RGBELoader 还是 EXRLoader（blob URL 上取不到扩展名）
+      customHdrName: nonEmptyString(environmentSource.customHdrName),
+      customHdrUrl: nonEmptyString(environmentSource.customHdrUrl),
+      customHdrPath: nonEmptyString(environmentSource.customHdrPath),
+      customHdrExtension: nonEmptyString(environmentSource.customHdrExtension),
     },
+  }
+}
+
+function nonEmptyString(value) {
+  return typeof value === 'string' && value ? value : null
+}
+
+/**
+ * 启动时读取设置用：导入的环境贴图只有在"存在应用数据目录副本"时才能跨会话复现。
+ *
+ * Web 端导入的只是 blob URL，刷新页面即失效；桌面端若副本被删掉也读不出来。
+ * 这两种情况都退回程序化渐变，避免留下一个"界面显示已导入、实际没有环境"的假状态。
+ */
+export function degradeStaleImportedEnvironment(environment) {
+  if (environment?.source !== 'imported') return environment
+  if (environment.customHdrPath) return environment
+  return {
+    ...environment,
+    source: 'gradient',
+    customHdrName: null,
+    customHdrUrl: null,
+    customHdrExtension: null,
   }
 }
 

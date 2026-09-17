@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { GRADIENT_TEXTURE_SIZE, EnvironmentManager, createGradientEquirectData, environmentCacheKey } from './environment.js'
+import {
+  GRADIENT_TEXTURE_SIZE,
+  EnvironmentManager,
+  createGradientEquirectData,
+  environmentCacheKey,
+  resolveEnvironmentPlan,
+} from './environment.js'
 
 /** 取第 y 行第一列像素的亮度（线性值） */
 function rowLuma(result, y) {
@@ -68,6 +74,44 @@ describe('environmentCacheKey', () => {
     expect(environmentCacheKey(base)).toBe(environmentCacheKey({ ...base }))
     expect(environmentCacheKey(base)).not.toBe(environmentCacheKey({ ...base, topColor: '#eee' }))
     expect(environmentCacheKey(base)).not.toBe(environmentCacheKey({ ...base, source: 'room' }))
+  })
+})
+
+describe('resolveEnvironmentPlan（M6-5 导入环境贴图的选择逻辑）', () => {
+  it('三种程序化来源直接透传', () => {
+    expect(resolveEnvironmentPlan({ source: 'gradient' }).kind).toBe('gradient')
+    expect(resolveEnvironmentPlan({ source: 'room' }).kind).toBe('room')
+    expect(resolveEnvironmentPlan({ source: 'none' }).kind).toBe('none')
+    // 非法来源退回渐变（与 normalizeLightingState 的兜底一致）
+    expect(resolveEnvironmentPlan({ source: 'weird' }).kind).toBe('gradient')
+  })
+
+  it('导入的贴图已登记时用 imported，缓存键跟 URL 走', () => {
+    const environment = { source: 'imported', customHdrUrl: 'asset://localhost/env/studio.hdr' }
+    const plan = resolveEnvironmentPlan(environment, { importedReady: true })
+    expect(plan.kind).toBe('imported')
+    expect(plan.cacheKey).toBe('imported|asset://localhost/env/studio.hdr')
+    expect(plan.fellBack).toBe(false)
+
+    // 换一张贴图必须换 key（否则会复用上一张的 PMREM）
+    const other = resolveEnvironmentPlan(
+      { ...environment, customHdrUrl: 'asset://localhost/env/other.hdr' },
+      { importedReady: true },
+    )
+    expect(other.cacheKey).not.toBe(plan.cacheKey)
+  })
+
+  it('贴图还没加载好 / 没有地址时退化为渐变并标记 fellBack（画面不会变黑）', () => {
+    const notReady = resolveEnvironmentPlan(
+      { source: 'imported', customHdrUrl: 'asset://localhost/env/studio.hdr' },
+      { importedReady: false },
+    )
+    expect(notReady.kind).toBe('gradient')
+    expect(notReady.fellBack).toBe(true)
+
+    const noUrl = resolveEnvironmentPlan({ source: 'imported' }, { importedReady: true })
+    expect(noUrl.kind).toBe('gradient')
+    expect(noUrl.fellBack).toBe(true)
   })
 })
 

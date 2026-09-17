@@ -5,6 +5,7 @@
 </template>
 
 <script setup>
+import { ElMessage } from 'element-plus'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { useViewerEngine } from '../../composables/useViewerEngine.js'
@@ -95,7 +96,22 @@ onBeforeUnmount(() => unmount())
 
 /** 把光照状态推给引擎（光源位置/颜色/强度 + 环境贴图） */
 function applyLightingSettings() {
-  engine.value?.applyLighting(lightingSettings.value)
+  const current = engine.value
+  if (!current) return
+
+  const settings = lightingSettings.value
+  // 导入的 HDR/EXR 要先读文件并登记，才能被 applyLighting 生成 PMREM；
+  // 读取过程是异步的，成功后会由引擎自己重新套用光照（失败则退化为程序化环境）。
+  if (current.needsImportedEnvironment(settings.environment)) {
+    void current.loadImportedEnvironment(settings.environment).then((result) => {
+      if (!result.ok) {
+        ElMessage.warning(`环境贴图读取失败（${result.error}），已改用程序化环境`)
+      }
+    })
+    return
+  }
+
+  current.applyLighting(settings)
 }
 
 // 显示设置变化 → 引擎

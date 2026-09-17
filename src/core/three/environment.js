@@ -15,6 +15,9 @@ export const GRADIENT_TEXTURE_SIZE = { width: 128, height: 64 }
 /** RoomEnvironment 的模糊量：0.04 是 three 官方示例的取值 */
 const ROOM_ENVIRONMENT_SIGMA = 0.04
 
+/** 程序化来源（不含 imported，它需要额外的加载状态判断） */
+const PROCEDURAL_SOURCES = ['gradient', 'room', 'none']
+
 function mixChannel(a, b, t) {
   return a + (b - a) * t
 }
@@ -77,6 +80,49 @@ export function environmentCacheKey(environment = {}) {
   ].join('|')
 }
 
+/**
+ * 决定这一帧实际要用哪种环境（纯函数，便于单测）。
+ *
+ * 关键点：**导入的贴图没准备好时必须退化为渐变**。它要经网络读取 + PMREM 转换，
+ * 是异步的；若此时让 scene.environment 保持为空，画面会直接变黑，
+ * 用户看到的是"导入了 HDR 反而黑了"。
+ *
+ * @param {object} environment 光照状态里的 environment
+ * @param {{importedReady?: boolean}} options 导入贴图是否已加载并登记
+ * @returns {{kind: 'none'|'gradient'|'room'|'imported', cacheKey: string, fellBack: boolean}}
+ */
+export function resolveEnvironmentPlan(environment = {}, { importedReady = false } = {}) {
+  const raw = environment.source ?? 'gradient'
+  // 与 normalizeLightingState 的兜底保持一致：非法来源按渐变处理（防御性，正常路径到不了这里）
+  const requested = raw === 'imported' || PROCEDURAL_SOURCES.includes(raw) ? raw : 'gradient'
+  const canUseImported = requested === 'imported' && importedReady && Boolean(environment.customHdrUrl)
+  const kind = canUseImported ? 'imported' : requested === 'imported' ? 'gradient' : requested
+
+  if (kind === 'imported') {
+    // 缓存键用 URL：同一张 HDR 的不同强度不需要重新做 PMREM
+    return { kind, cacheKey: `imported|${environment.customHdrUrl}`, fellBack: false }
+  }
+  return {
+    kind,
+    cacheKey: environmentCacheKey({ ...environment, source: kind }),
+    fellBack: requested === 'imported',
+  }
+}
+
+/**
+ * 读取等距柱状的 HDR / EXR 文件（按需 import，两个 loader 都不进首屏）。
+ * @param {string} url asset 协议 URL 或 blob URL
+ * @param {{extension?: string}} options 扩展名（exr 走 EXRLoader，其余按 HDR 处理）
+ */
+export async function loadEquirectangularTexture(url, { extension = 'hdr' } = {}) {
+  if (extension === 'exr') {
+    const { EXRLoader } = await import('three/addons/loaders/EXRLoader.js')
+    return new EXRLoader().loadAsync(url)
+  }
+  const { RGBELoader } = await import('three/addons/loaders/RGBELoader.js')
+  return new RGBELoader().loadAsync(url)
+}
+
 export class EnvironmentManager {
   /**
    * @param {object} renderer WebGLRenderer（PMREM 需要真实渲染器）
@@ -91,33 +137,55 @@ export class EnvironmentManager {
     this.currentTexture = null
     this.currentKey = null
     this.roomScene = null
+    /** 用户导入的等距柱状贴图：URL → 原始 texture（尚未做 PMREM） */
+    this.importedTextures = new Map()
+  }
+
+  /**
+   * 登记一张导入的环境贴图（由引擎在文件读完之后调用）。
+   * 同一 URL 重复登记会替换并释放旧贴图，避免切换主题时泄漏显存。
+   */
+  registerImportedTexture(url, texture) {
+    if (!url || !texture) return false
+    const existing = this.importedTextures.get(url)
+    if (existing && existing !== texture) existing.dispose?.()
+    this.importedTextures.set(url, texture)
+    return true
+  }
+
+  hasImportedTexture(url) {
+    return Boolean(url && this.importedTextures.has(url))
   }
 
   /**
    * 应用环境设置（幂等）。
-   * @param {{source: string, intensity: number, topColor: string, horizonColor: string, bottomColor: string}} environment
+   * @param {{source: string, intensity: number, topColor: string, horizonColor: string,
+   *   bottomColor: string, customHdrUrl?: string}} environment
    * @returns {object|null} 当前的环境贴图（供"环境贴图作为背景"使用）
    */
   apply(environment = {}) {
-    const source = environment.source ?? 'gradient'
     const intensity = Number.isFinite(environment.intensity) ? environment.intensity : 1
-    const key = environmentCacheKey(environment)
+    const plan = resolveEnvironmentPlan(environment, {
+      importedReady: this.hasImportedTexture(environment.customHdrUrl),
+    })
 
-    if (source === 'none') {
+    if (plan.kind === 'none') {
       this.disposeTexture()
       this.scene.environment = null
       this.scene.environmentIntensity = 0
-      this.currentKey = key
+      this.currentKey = plan.cacheKey
       return null
     }
 
-    if (this.currentKey !== key || !this.currentTexture) {
+    if (this.currentKey !== plan.cacheKey || !this.currentTexture) {
       this.disposeTexture()
-      this.currentTexture =
-        source === 'room'
-          ? this.generateFromRoom()
-          : this.generateFromGradient(environment)
-      this.currentKey = key
+      if (plan.kind === 'imported') {
+        this.currentTexture = this.generateFromImported(environment.customHdrUrl)
+      } else {
+        this.currentTexture =
+          plan.kind === 'room' ? this.generateFromRoom() : this.generateFromGradient(environment)
+      }
+      this.currentKey = plan.cacheKey
     }
 
     this.scene.environment = this.currentTexture
@@ -143,14 +211,11 @@ export class EnvironmentManager {
     return target.texture
   }
 
-  /** 用外部加载好的等距柱状贴图（HDR/EXR）替换环境 */
-  applyEquirectangularTexture(texture) {
-    this.disposeTexture()
-    const target = this.generator.fromEquirectangular(texture)
-    this.currentTexture = target.texture
-    this.currentKey = null
-    this.scene.environment = this.currentTexture
-    return this.currentTexture
+  /** 用已登记的导入贴图生成 PMREM 环境（M6-5 的导入路径走这里） */
+  generateFromImported(url) {
+    const source = this.importedTextures.get(url)
+    if (!source) return null
+    return this.generator.fromEquirectangular(source).texture
   }
 
   disposeTexture() {
@@ -162,6 +227,9 @@ export class EnvironmentManager {
 
   dispose() {
     this.disposeTexture()
+    // 导入贴图是原始数据（未做 PMREM），也必须显式释放
+    for (const texture of this.importedTextures.values()) texture.dispose?.()
+    this.importedTextures.clear()
     // RoomEnvironment 内部是若干 Mesh + 材质，交给 three 的常规释放流程
     if (this.roomScene) {
       this.roomScene.traverse?.((node) => {

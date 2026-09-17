@@ -11,7 +11,7 @@ import { pictureDir, join } from '@tauri-apps/api/path'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { open, save } from '@tauri-apps/plugin-dialog'
 
-import { OPEN_DIALOG_FILTERS } from '../constants/formats.js'
+import { ENVIRONMENT_DIALOG_FILTERS, OPEN_DIALOG_FILTERS } from '../constants/formats.js'
 
 /** 系统文件对话框，返回绝对路径数组 */
 export async function pickPaths() {
@@ -95,6 +95,24 @@ export async function suggestedSavePath(fileName) {
 /** 把 base64 的 PNG 交给 Rust 写盘（前端不碰 fs，写盘约束收在命令里） */
 export function saveScreenshotFile({ path, base64 }) {
   return invoke('save_screenshot', { path, base64 })
+}
+
+/* --------------------------- 环境贴图导入（M6-5） --------------------------- */
+
+/** 选一个 HDR / EXR 文件（返回绝对路径；取消时 null） */
+export async function pickEnvironmentPath() {
+  const selected = await open({
+    multiple: false,
+    directory: false,
+    title: '选择环境贴图（HDR / EXR）',
+    filters: ENVIRONMENT_DIALOG_FILTERS,
+  })
+  return typeof selected === 'string' ? selected : null
+}
+
+/** 把选中的环境贴图复制进应用数据目录，返回副本路径（主题靠它跨会话复现） */
+export function storeEnvironmentMap(path) {
+  return invoke('store_environment_map', { path })
 }
 
 /* --------------------- 关联文件启动 / 单实例（M6-6） --------------------- */

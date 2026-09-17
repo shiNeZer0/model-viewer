@@ -264,7 +264,7 @@ mod tests {
     }
 
     #[test]
-    fn save_blocking_拒绝非PNG与空数据() {
+    fn save_blocking_拒绝非png与空数据() {
         let target = temp_path("reject.png");
         let not_png = base64_of(b"GIF89a-not-a-png");
         assert!(save_blocking(&target, &not_png)

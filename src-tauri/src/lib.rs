@@ -7,6 +7,7 @@ mod app_state;
 mod asset_scope;
 mod commands;
 mod open_request;
+mod paths;
 
 /// 第二个实例被拦下时，把待打开文件转发给主窗口的事件名（前端在 platform 层订阅）
 const OPEN_MODEL_EVENT: &str = "open-model-path";
@@ -34,8 +35,7 @@ pub fn run() {
     ];
 
     let app_dir = {
-        let home = dirs::home_dir().expect("failed to get home directory");
-        let dir = home.join(".model-viewer").join("app");
+        let dir = paths::app_dir().expect("failed to resolve app directory");
         std::fs::create_dir_all(&dir).expect("failed to create app directory");
         dir
     };
@@ -85,6 +85,7 @@ pub fn run() {
             commands::asset::list_asset_grants,
             commands::asset::revoke_asset_grants,
             commands::screenshot::save_screenshot,
+            commands::environment::store_environment_map,
             open_request::startup_model_path,
         ])
         .setup(|_app| {

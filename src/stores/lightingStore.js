@@ -20,6 +20,7 @@ import {
 import {
   createDefaultLightingState,
   createThemePayload,
+  degradeStaleImportedEnvironment,
   normalizeLight,
   normalizeLightingState,
   parseThemePayload,
@@ -69,6 +70,17 @@ export const useLightingStore = defineStore('lighting', () => {
     Object.assign(lighting.ambient, normalized.ambient)
     lighting.lights.splice(0, lighting.lights.length, ...normalized.lights)
     Object.assign(lighting.environment, normalized.environment)
+  }
+
+  /**
+   * 从持久化设置里恢复状态。
+   * 额外一步：导入的环境贴图若没有"应用数据目录副本"（Web 端或是副本已删），
+   * 退回程序化渐变——否则界面会显示"已导入 x.hdr"而实际没有环境。
+   */
+  function restoreState(saved) {
+    const state = normalizeLightingState(saved)
+    state.environment = degradeStaleImportedEnvironment(state.environment)
+    replaceState(state)
   }
 
   async function persist(name, value) {
@@ -126,7 +138,7 @@ export const useLightingStore = defineStore('lighting', () => {
       const rawState = saved[SETTING_KEYS.state]
       if (rawState) {
         const parsed = parseThemePayload({ lighting: rawState }).payload
-        if (parsed) replaceState(parsed.lighting)
+        if (parsed) restoreState(parsed.lighting)
       }
 
       const savedThemeId = saved[SETTING_KEYS.activeThemeId]
@@ -224,7 +236,8 @@ export const useLightingStore = defineStore('lighting', () => {
     const result = parseThemePayload(theme.payload)
     if (!result.ok) throw new Error(result.error)
 
-    replaceState(result.payload.lighting)
+    // 主题里的导入环境贴图同样要能"读不出来就退回渐变"（副本被删 / Web 端 blob 已失效）
+    restoreState(result.payload.lighting)
     await applyBackgroundSnapshot(result.payload.background, { persist: shouldPersist })
     await applyRenderSnapshot(result.payload.render, { persist: shouldPersist })
 

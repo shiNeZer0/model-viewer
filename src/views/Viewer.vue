@@ -143,7 +143,13 @@ import { useHotkeys } from '../composables/useHotkeys.js'
 import { useModelOpen } from '../composables/useModelOpen.js'
 import { DEFAULT_SCREENSHOT_SCALE, buildScreenshotFileName } from '../core/screenshot.js'
 import { DEFAULT_VIEW_PRESET, VIEW_PRESETS } from '../core/three/viewPresets.js'
-import { capabilities, saveScreenshot, subscribeOpenRequest, takeStartupModelPath } from '../platform/index.js'
+import {
+  capabilities,
+  resolveStoredEnvironment,
+  saveScreenshot,
+  subscribeOpenRequest,
+  takeStartupModelPath,
+} from '../platform/index.js'
 import { useAnimationStore } from '../stores/animationStore.js'
 import { useDisplayStore } from '../stores/displayStore.js'
 import { useLightingStore } from '../stores/lightingStore.js'
@@ -205,6 +211,30 @@ async function consumeStartupOpen() {
   if (!path) return
   ElMessage.info(`正在打开：${path}`)
   await openPath(path, { source: 'startup' })
+}
+
+/* --------------------- 导入环境贴图的启动恢复（M6-5） --------------------- */
+
+/**
+ * 桌面端：重新授权已保存的导入环境贴图。
+ * asset 协议的读取权限只在本次运行内有效，不重授权的话环境贴图会在启动后读取失败、
+ * 静默退回程序化环境（界面却显示已导入）。重新授权后刷新 URL，由 ModelCanvas 的
+ * 监听去真正加载。
+ */
+async function restoreImportedEnvironment() {
+  const env = lighting.toEngineSettings.environment
+  if (env.source !== 'imported' || !env.customHdrPath) return
+
+  const resolved = await resolveStoredEnvironment(env)
+  if (!resolved) return
+  await lighting.updateEnvironment(
+    {
+      customHdrName: resolved.name,
+      customHdrUrl: resolved.url,
+      customHdrExtension: resolved.extension,
+    },
+    { persist: false },
+  )
 }
 
 /* --------------------------- 截图导出（M6-4） --------------------------- */
@@ -376,6 +406,8 @@ function onEngineReady(engine) {
   rendererInfo.value = engine.getRendererInfo()
   // 关联文件启动与二次打开都依赖引擎已就绪，因此挂在这里而不是 onMounted
   void consumeStartupOpen()
+  // 已保存的导入环境贴图要重新授权，否则启动后会静默退回程序化环境
+  void restoreImportedEnvironment()
   void subscribeOpenRequest((path) => openPath(path, { source: 'startup' })).then((unlisten) => {
     unlistenOpenRequest = unlisten
   })

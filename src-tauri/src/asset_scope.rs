@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 /// 支持的三维模型扩展名（与前端 `src/constants/formats.js` 保持一致）
 pub const SUPPORTED_EXTENSIONS: &[&str] = &["glb", "gltf", "fbx", "obj", "stl", "ply", "3mf"];
 
+/// 可导入的环境贴图扩展名（等距柱状 HDR / EXR，与前端 `constants/formats.js` 一致）
+pub const ENVIRONMENT_EXTENSIONS: &[&str] = &["hdr", "exr"];
+
 /// 单次运行最多授予的路径条目数，防止 scope 无限膨胀
 pub const MAX_GRANTED_PATHS: usize = 32;
 
@@ -61,6 +64,70 @@ impl ModelFormat {
             Self::Ply => "ply",
             Self::ThreeMf => "3mf",
         }
+    }
+}
+
+/// 用户可导入的环境贴图格式（等距柱状投影）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnvironmentFormat {
+    Hdr,
+    Exr,
+}
+
+impl EnvironmentFormat {
+    pub fn from_extension(ext: &str) -> Option<Self> {
+        let normalized = ext.trim_start_matches('.').to_ascii_lowercase();
+        if !ENVIRONMENT_EXTENSIONS.contains(&normalized.as_str()) {
+            return None;
+        }
+        match normalized.as_str() {
+            "hdr" => Some(Self::Hdr),
+            "exr" => Some(Self::Exr),
+            _ => None,
+        }
+    }
+
+    pub fn from_path(path: &Path) -> Option<Self> {
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .and_then(Self::from_extension)
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Hdr => "hdr",
+            Self::Exr => "exr",
+        }
+    }
+}
+
+/// 可被授权读取的资源类别。
+///
+/// 模型与环境贴图共用同一条授权链路（用户主动选择 → 授予 asset 协议读取权），
+/// 区别只在扩展名白名单与是否需要目录级递归授权：环境贴图是单文件格式，
+/// 永远只需要 `GrantMode::File`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetFormat {
+    Model(ModelFormat),
+    Environment(EnvironmentFormat),
+}
+
+impl AssetFormat {
+    pub fn from_path(path: &Path) -> Option<Self> {
+        ModelFormat::from_path(path)
+            .map(Self::Model)
+            .or_else(|| EnvironmentFormat::from_path(path).map(Self::Environment))
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Model(format) => format.as_str(),
+            Self::Environment(format) => format.as_str(),
+        }
+    }
+
+    pub fn is_environment(&self) -> bool {
+        matches!(self, Self::Environment(_))
     }
 }
 
@@ -226,7 +293,7 @@ impl std::fmt::Display for GrantError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GrantPlan {
     pub file: PathBuf,
-    pub format: ModelFormat,
+    pub format: AssetFormat,
     /// `None` 表示只授权文件本身
     pub dir: Option<PathBuf>,
     pub recursive: bool,
@@ -234,17 +301,25 @@ pub struct GrantPlan {
 
 /// 纯路径计算，不访问文件系统（存在性/类型检查由调用方在 IO 层完成）
 pub fn plan_grant(file: &Path, mode: GrantMode) -> Result<GrantPlan, GrantError> {
-    let format = ModelFormat::from_path(file)
+    let format = AssetFormat::from_path(file)
         .ok_or_else(|| GrantError::UnsupportedFormat(extension_label(file)))?;
 
-    let (dir, recursive) = match mode {
+    // 环境贴图是单文件格式：无论设置成什么模式都只授权文件本身，
+    // 免得为了一个 HDR 把整个目录（可能是下载目录）递归开放给 asset 协议。
+    let effective_mode = if format.is_environment() {
+        GrantMode::File
+    } else {
+        mode
+    };
+
+    let (dir, recursive) = match effective_mode {
         GrantMode::File => (None, false),
         GrantMode::Parent | GrantMode::ParentRecursive => {
             let dir = file
                 .parent()
                 .filter(|parent| !parent.as_os_str().is_empty())
                 .ok_or_else(|| GrantError::NotAFile(file.to_path_buf()))?;
-            (Some(dir.to_path_buf()), mode.is_recursive())
+            (Some(dir.to_path_buf()), effective_mode.is_recursive())
         }
     };
 
@@ -445,9 +520,40 @@ mod tests {
     #[test]
     fn plan_grant_file_mode_grants_single_file() {
         let plan = plan_grant(Path::new("E:\\models\\robot.glb"), GrantMode::File).unwrap();
-        assert_eq!(plan.format, ModelFormat::Glb);
+        assert_eq!(plan.format, AssetFormat::Model(ModelFormat::Glb));
+        assert_eq!(plan.format.as_str(), "glb");
         assert_eq!(plan.dir, None);
         assert!(!plan.recursive);
+    }
+
+    #[test]
+    fn 环境贴图只认_hdr_与_exr() {
+        assert_eq!(
+            EnvironmentFormat::from_extension(".HDR"),
+            Some(EnvironmentFormat::Hdr)
+        );
+        assert_eq!(
+            EnvironmentFormat::from_path(Path::new("E:\\env\\studio.exr")),
+            Some(EnvironmentFormat::Exr)
+        );
+        assert_eq!(EnvironmentFormat::from_extension("png"), None);
+        assert_eq!(AssetFormat::from_path(Path::new("E:\\env\\studio.hdr")),
+            Some(AssetFormat::Environment(EnvironmentFormat::Hdr)));
+        assert_eq!(
+            AssetFormat::from_path(Path::new("E:\\m\\a.glb")),
+            Some(AssetFormat::Model(ModelFormat::Glb))
+        );
+        assert_eq!(AssetFormat::from_path(Path::new("E:\\env\\sky.png")), None);
+    }
+
+    #[test]
+    fn 环境贴图永远只授权文件本身() {
+        // 即便用户设置是"父目录递归"，一个 HDR 也不该把整个目录开放出去
+        let plan = plan_grant(Path::new("E:\\downloads\\studio.hdr"), GrantMode::ParentRecursive)
+            .unwrap();
+        assert_eq!(plan.dir, None);
+        assert!(!plan.recursive);
+        assert!(plan.format.is_environment());
     }
 
     #[test]

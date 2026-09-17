@@ -39,6 +39,23 @@ export const OPEN_DIALOG_FILTERS = [
 /** Web 端 <input type="file" accept> 的取值（浏览器用它过滤可选文件类型） */
 export const ACCEPT_ATTRIBUTE = SUPPORTED_EXTENSIONS.map((extension) => `.${extension}`).join(',')
 
+/**
+ * 可导入的环境贴图扩展名（等距柱状 HDR / EXR）。
+ * 必须与后端 `src-tauri/src/asset_scope.rs` 的 ENVIRONMENT_EXTENSIONS 保持一致，两侧都有单测守着。
+ */
+export const ENVIRONMENT_EXTENSIONS = ['hdr', 'exr']
+
+/** 环境贴图的文件对话框过滤器 */
+export const ENVIRONMENT_DIALOG_FILTERS = [
+  { name: '环境贴图（HDR / EXR）', extensions: ENVIRONMENT_EXTENSIONS },
+  { name: '全部文件', extensions: ['*'] },
+]
+
+/** Web 端环境贴图 file input 的 accept */
+export const ENVIRONMENT_ACCEPT_ATTRIBUTE = ENVIRONMENT_EXTENSIONS.map(
+  (extension) => `.${extension}`,
+).join(',')
+
 /** 取小写扩展名（不含点）；无扩展名返回空串 */
 export function extensionOf(fileName) {
   if (typeof fileName !== 'string') return ''

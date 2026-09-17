@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  ENVIRONMENT_ACCEPT_ATTRIBUTE,
+  ENVIRONMENT_DIALOG_FILTERS,
+  ENVIRONMENT_EXTENSIONS,
   MODEL_FORMATS,
   OPEN_DIALOG_FILTERS,
   SUPPORTED_EXTENSIONS,
@@ -10,6 +13,24 @@ import {
   resolveFormatById,
   resolveFormatByName,
 } from './formats.js'
+
+describe('环境贴图扩展名（M6-5）', () => {
+  it('与后端 asset_scope.rs 的 ENVIRONMENT_EXTENSIONS 一致', () => {
+    // 后端改动时这里会先失败
+    expect([...ENVIRONMENT_EXTENSIONS].sort()).toEqual(['exr', 'hdr'])
+  })
+
+  it('不与模型扩展名重叠（否则选取对话框会互相污染）', () => {
+    for (const extension of ENVIRONMENT_EXTENSIONS) {
+      expect(SUPPORTED_EXTENSIONS).not.toContain(extension)
+    }
+  })
+
+  it('过滤器与 accept 都由同一份列表推导', () => {
+    expect(ENVIRONMENT_DIALOG_FILTERS[0].extensions).toEqual(ENVIRONMENT_EXTENSIONS)
+    expect(ENVIRONMENT_ACCEPT_ATTRIBUTE).toBe('.hdr,.exr')
+  })
+})
 
 describe('formats 注册表', () => {
   it('扩展名列表与后端 asset_scope.rs 的 SUPPORTED_EXTENSIONS 一致', () => {

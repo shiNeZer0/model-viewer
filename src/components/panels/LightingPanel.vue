@@ -37,8 +37,36 @@
         >
           <el-radio-button value="room">影棚</el-radio-button>
           <el-radio-button value="gradient">渐变</el-radio-button>
+          <el-radio-button value="imported">导入</el-radio-button>
           <el-radio-button value="none">无</el-radio-button>
         </el-radio-group>
+      </el-form-item>
+
+      <!-- 导入 HDR / EXR：桌面端会复制进应用数据目录，Web 端只能当次会话有效 -->
+      <el-form-item v-if="environment.source === 'imported'" label="贴图">
+        <div class="lighting-panel__hdr">
+          <el-button size="small" :loading="importingEnv" @click="onImportEnvironment">
+            {{ environment.customHdrName ? '重新导入' : '选择 HDR / EXR' }}
+          </el-button>
+          <el-button
+            v-if="environment.customHdrName"
+            size="small"
+            text
+            @click="onClearEnvironment"
+          >
+            移除
+          </el-button>
+        </div>
+        <p v-if="environment.customHdrName" class="lighting-panel__hdr-name">
+          {{ environment.customHdrName }}
+        </p>
+        <p class="lighting-panel__desc">
+          {{
+            canPersistEnvironment
+              ? '已复制到应用数据目录，保存为主题后换电脑/移动原文件都不受影响。'
+              : 'Web 预览下导入的贴图只对本次会话有效，刷新后会退回程序化环境。'
+          }}
+        </p>
       </el-form-item>
 
       <el-form-item label="强度">
@@ -158,6 +186,7 @@ import { computed, ref } from 'vue'
 
 import { LIGHTING_PRESETS, resolvePreset } from '../../constants/presets/lightingPresets.js'
 import { LIGHT_LIMITS, LIGHT_ROLES } from '../../core/three/lighting.js'
+import { capabilities, pickEnvironmentSource } from '../../platform/index.js'
 import { useLightingStore } from '../../stores/lightingStore.js'
 import { describeError } from '../../utils/error-messages.js'
 import LightSourceEditor from './LightSourceEditor.vue'
@@ -165,10 +194,13 @@ import LightSourceEditor from './LightSourceEditor.vue'
 const lighting = useLightingStore()
 const themeName = ref('')
 const saving = ref(false)
+const importingEnv = ref(false)
 
 const environment = computed(() => lighting.lighting.environment)
 const ambient = computed(() => lighting.lighting.ambient)
 const lights = computed(() => lighting.lighting.lights)
+/** 桌面端会把导入的贴图复制进应用数据目录（可跨会话），Web 端不行 */
+const canPersistEnvironment = computed(() => Boolean(capabilities.persistImportedEnvironment))
 
 const presetDescription = computed(() => {
   const preset = resolvePreset(lighting.matchedPresetId)
@@ -195,6 +227,47 @@ async function updateAmbient(key, value, persist = true) {
 
 async function updateEnvironment(key, value, persist = true) {
   await lighting.updateEnvironment({ [key]: value }, { persist })
+}
+
+/**
+ * 导入 HDR/EXR 环境贴图。
+ * 桌面端由平台层先复制进应用数据目录再授权，所以这里的 url 指向的是副本，
+ * 之后移动/删除原文件都不会让已保存的主题失效。
+ */
+async function onImportEnvironment() {
+  if (importingEnv.value) return
+  importingEnv.value = true
+  try {
+    const source = await pickEnvironmentSource()
+    if (!source) return
+    await lighting.updateEnvironment({
+      source: 'imported',
+      customHdrName: source.sourceName,
+      customHdrUrl: source.url,
+      customHdrPath: source.storedPath ?? null,
+      customHdrExtension: source.extension,
+    })
+    ElMessage.success(`已导入环境贴图：${source.sourceName}`)
+  } catch (error) {
+    ElMessage.error(describeError(error))
+  } finally {
+    importingEnv.value = false
+  }
+}
+
+/**
+ * 移除导入的贴图：回到渐变。
+ * 刻意**不删**应用数据目录里的副本——其它主题或历史设置可能引用同一个文件，
+ * 误删会让它们集体失效。
+ */
+async function onClearEnvironment() {
+  await lighting.updateEnvironment({
+    source: 'gradient',
+    customHdrName: null,
+    customHdrUrl: null,
+    customHdrPath: null,
+    customHdrExtension: null,
+  })
 }
 
 async function onLightChange({ role, patch, persist }) {
@@ -291,6 +364,19 @@ async function onRemoveTheme(row) {
   font-size: 12px;
   line-height: 1.6;
   color: var(--el-text-color-secondary);
+}
+
+.lighting-panel__hdr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lighting-panel__hdr-name {
+  margin: 4px 0 0;
+  font-size: 12px;
+  word-break: break-all;
+  color: var(--el-text-color-regular);
 }
 
 .lighting-panel__save {

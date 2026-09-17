@@ -30,6 +30,8 @@ export const capabilities = {
   pathAccess: isTauri,
   /** 能按路径重新打开历史记录 */
   reopenByPath: isTauri,
+  /** 能把导入的环境贴图复制进应用数据目录（跨会话引用）；Web 端只有当次会话有效的 blob */
+  persistImportedEnvironment: isTauri,
   /** 持久化后端：桌面用 SQLite，Web 用 localStorage */
   persistence: isTauri ? 'sqlite' : 'localStorage',
   /** 原生（系统层）拖放事件 */

@@ -6,7 +6,7 @@
  * 桌面包也不会加载 Web 的 blob 逻辑。
  */
 
-import { resolveFormatByName } from '../constants/formats.js'
+import { extensionOf, resolveFormatByName } from '../constants/formats.js'
 import { dataUrlMimeType, stripDataUrlPrefix } from '../core/screenshot.js'
 import { describeError, splitErrorCode } from '../utils/error-messages.js'
 import { capabilities, isTauri, runtime, RUNTIME } from './runtime.js'
@@ -242,6 +242,73 @@ export async function saveScreenshot({ dataUrl, fileName }) {
   const backend = await loadWebBackend()
   const saved = backend.downloadScreenshot({ fileName, dataUrl })
   return { saved: true, path: saved.path, bytes: saved.bytes }
+}
+
+/* --------------------------- 环境贴图导入（M6-5） --------------------------- */
+
+/**
+ * 选一个环境贴图（HDR / EXR）并准备成可加载的来源。
+ *
+ * 桌面端会**先把文件复制进应用数据目录再授权**：
+ * - asset 协议的读取权限只在本次运行内有效，而主题要能跨会话复现；
+ * - 复制后用户移动/删除原文件也不会让已保存的主题失效。
+ * Web 端只能用 blob（刷新即失效），因此返回的对象带 `storedPath: null`，界面据此提示"仅本次会话有效"。
+ *
+ * @returns {Promise<null|{name: string, sourceName: string, url: string, storedPath: string|null,
+ *   bytes: number, extension: string}>} 取消时返回 null
+ */
+export async function pickEnvironmentSource() {
+  if (isTauri) {
+    const backend = await loadTauriBackend()
+    const picked = await backend.pickEnvironmentPath()
+    if (!picked) return null
+
+    const stored = await backend.storeEnvironmentMap(picked)
+    // 环境贴图永远只授权文件本身（后端 plan_grant 也会强制这一点）
+    await backend.allowAssetPaths([stored.storedPath], 'file')
+
+    return {
+      name: stored.fileName,
+      sourceName: stored.sourceName,
+      url: backend.toLoaderUrl(stored.storedPath),
+      storedPath: stored.storedPath,
+      bytes: stored.bytes,
+      extension: extensionOf(stored.fileName),
+    }
+  }
+
+  const backend = await loadWebBackend()
+  const file = await backend.pickEnvironmentFile()
+  if (!file) return null
+  return {
+    name: file.name,
+    sourceName: file.name,
+    url: URL.createObjectURL(file),
+    storedPath: null,
+    bytes: file.size,
+    extension: extensionOf(file.name),
+  }
+}
+
+/**
+ * 恢复一个已保存的导入环境贴图：桌面端重新授权副本并给出可加载的 URL。
+ * 返回 null 表示"这次用不了"（Web 端、或副本已被删除），调用方应让引擎退化为程序化环境。
+ */
+export async function resolveStoredEnvironment(environment) {
+  const storedPath = environment?.customHdrPath
+  if (!isTauri || !storedPath) return null
+  try {
+    const backend = await loadTauriBackend()
+    await backend.allowAssetPaths([storedPath], 'file')
+    return {
+      name: environment.customHdrName || fileNameOf(storedPath),
+      url: backend.toLoaderUrl(storedPath),
+      extension: extensionOf(storedPath),
+    }
+  } catch (error) {
+    console.warn('[platform] 重新授权已保存的环境贴图失败', error)
+    return null
+  }
 }
 
 /* --------------------- 关联文件启动 / 单实例（M6-6） --------------------- */

@@ -9,6 +9,7 @@
 import {
   Box3,
   DirectionalLight,
+  EquirectangularReflectionMapping,
   HemisphereLight,
   PerspectiveCamera,
   Scene,
@@ -23,7 +24,7 @@ import { resolveExportRatio } from '../screenshot.js'
 import { BoundingBoxOverlay } from './boundingBox.js'
 import { AnimationController, MAX_FRAME_DELTA } from './animation.js'
 import { disposeObject3D } from './disposal.js'
-import { EnvironmentManager } from './environment.js'
+import { EnvironmentManager, loadEquirectangularTexture } from './environment.js'
 import { buildHierarchy } from './hierarchy.js'
 import { DEFAULT_IDLE_MS, createIdlePolicy, hasContinuousWork } from './idlePolicy.js'
 import { LightingRig, createDefaultLightingState, normalizeLightingState } from './lighting.js'
@@ -582,6 +583,47 @@ export class ViewerEngine {
     this.animationPrefs = { ...(this.animationPrefs ?? {}), loopMode }
     this.animation?.setLoopMode(loopMode)
     return this.emitAnimationState()
+  }
+
+  /* --------------------------- 导入的环境贴图（M6-5） --------------------------- */
+
+  /** 当前光照状态是否指向一张**尚未登记**的导入贴图（需要先去读文件） */
+  needsImportedEnvironment(environment = this.lightingState?.environment) {
+    if (environment?.source !== 'imported') return false
+    const url = environment.customHdrUrl
+    return Boolean(url) && !this.environment.hasImportedTexture(url)
+  }
+
+  /**
+   * 读取导入的 HDR/EXR、登记到环境管理器，然后重新套用光照。
+   *
+   * 刻意**不抛错**：导入失败只意味着"退回程序化环境"，返回 { ok:false, error } 让调用方提示一句，
+   * 若抛出去会中断调用链，用户看到的是画面停在旧环境上一句话都没有。
+   */
+  async loadImportedEnvironment(environment) {
+    const url = environment?.customHdrUrl
+    if (!url) return { ok: false, error: '缺少环境贴图地址' }
+
+    try {
+      const texture = await loadEquirectangularTexture(url, {
+        extension: environment.customHdrExtension || 'hdr',
+      })
+      if (this.disposed) {
+        texture.dispose?.()
+        return { ok: false, error: '引擎已销毁' }
+      }
+      // 等距柱状映射：PMREM 转换与"环境贴图当背景"都依赖它
+      texture.mapping = EquirectangularReflectionMapping
+      texture.needsUpdate = true
+
+      this.environment.registerImportedTexture(url, texture)
+      this.applyLighting(this.lightingState)
+      console.info(`[ViewerEngine] 环境贴图已载入并应用: ${environment.customHdrName ?? url}`)
+      return { ok: true, name: environment.customHdrName ?? '' }
+    } catch (error) {
+      console.warn('[ViewerEngine] 环境贴图读取失败，已退回程序化环境', error)
+      return { ok: false, error: error?.message ?? String(error) }
+    }
   }
 
   /* ------------------------------- 模型与相机 ------------------------------- */

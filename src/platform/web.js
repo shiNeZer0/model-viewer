@@ -7,18 +7,18 @@
  * - 文件元信息与真实格式由前端自己嗅探（见 sniff.js）。
  */
 
-import { ACCEPT_ATTRIBUTE } from '../constants/formats.js'
+import { ACCEPT_ATTRIBUTE, ENVIRONMENT_ACCEPT_ATTRIBUTE } from '../constants/formats.js'
 import { PROBE_HEAD_BYTES, isZipContainer, sniffFormat } from './sniff.js'
 
 /**
  * 弹出隐藏的 file input 让用户选择文件。
  * 同时监听 change 与 cancel：用户取消时也必须 resolve，否则调用方的 Promise 永远挂着。
  */
-export function pickFiles({ multiple = true } = {}) {
+export function pickFiles({ multiple = true, accept = ACCEPT_ATTRIBUTE } = {}) {
   return new Promise((resolve) => {
     const input = document.createElement('input')
     input.type = 'file'
-    input.accept = ACCEPT_ATTRIBUTE
+    input.accept = accept
     input.multiple = multiple
     input.style.display = 'none'
 
@@ -113,8 +113,20 @@ export function downloadScreenshot({ fileName, dataUrl }) {
   return { path: fileName, bytes: bytes.length }
 }
 
-/* --------------------- 关联文件启动 / 单实例（M6-6） --------------------- */
+/* --------------------------- 环境贴图导入（M6-5） --------------------------- */
 
+/** 选一个 HDR / EXR 文件（不支持多选：环境贴图就是一张） */
+export async function pickEnvironmentFile() {
+  const files = await pickFiles({ multiple: false, accept: ENVIRONMENT_ACCEPT_ATTRIBUTE })
+  return files[0] ?? null
+}
+
+/** 浏览器没有应用数据目录，无法把导入的贴图复制成可跨会话引用的副本 */
+export async function storeEnvironmentMap() {
+  return null
+}
+
+/* --------------------- 关联文件启动 / 单实例（M6-6） --------------------- */
 /** 浏览器里没有"命令行启动参数"这回事 */
 export function startupModelPath() {
   return null
