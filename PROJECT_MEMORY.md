@@ -155,3 +155,11 @@
 这样一次运行就把"是 Vue 响应式断了，还是 three 场景逻辑断了"这个二分问题直接定位，不用再向用户追问。
 
 【附带修复】无 Canvas 环境生成渐变纹理失败时 scene.background 会变成 null（看起来像没设置背景），现回退为纯色。
+- [2026-09-17 08:12] [经验教训] 同文件并发 edit 会产生被 HMR 放大的中间态；store 无单测让最基础的引用错误漏到用户侧 — 两个操作层面的教训（model-viewer M2 期间，用户侧报 "markRaw is not defined"）：
+
+1) **同一条消息里对同一个文件发多个 edit 会并发竞争，产生"半截子"中间态**。本轮我把"加 markRaw 用法"和"补 markRaw import"两个 edit 放在同一条消息里对 modelStore.js 并发执行，结果中间态（有用法、无 import）被用户正开着的 dev server 经 HMR 推进浏览器 → 用户打开模型即报 ReferenceError。规约：**同一文件的多次修改必须合并成一次 write/edit，或分多轮串行**；跨文件并发没问题，同文件并发不行。
+   （另外注意：事后再 grep 源码、跑构建都是"一切正常"——因为最终态是对的。所以"用户报错但我在本地复现不出来"时，要优先怀疑**时间维度**：HMR/缓存把他带到了我编辑过程中的某个中间态。让他 Ctrl+F5 强刷是第一条动作。）
+
+2) **"X is not defined" + "Cannot access 'instance' before initialization" 同时出现时的解读**：前者是根因（引用了未导入的标识符），后者是 Vue 在组件初始化期间走错误处理路径触发的 TDZ 次生报错。**不要被后者的"Vue 内部感"带偏去查框架**，先解决前者；本例两条 TDZ 在修好前者后自然消失。
+
+3) **store 没有单测 = 验证缺口**。modelStore 此前 0 个用例，所以"用了 API 却没 import"这种最基础的问题能一路漏到用户侧（引用未导入标识符只在**调用时**才抛错，构建/eslint 都不一定拦得住）。Pinia setup store 在 Node 下可直接单测（setActivePinia(createPinia())），本轮补齐 7 例后即覆盖状态流转、进度夹取、纯数字快照断言、层级就地补丁与 reset 清理。凡新增 store 一律同步补最小单测集。

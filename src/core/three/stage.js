@@ -26,6 +26,7 @@ import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js'
 export const BACKGROUND_MODES = [
   { id: 'solid', label: '纯色' },
   { id: 'gradient', label: '渐变' },
+  { id: 'environment', label: '环境贴图' },
   { id: 'transparent', label: '透明（棋盘）' },
 ]
 
@@ -142,6 +143,20 @@ export class Stage {
       return this.mode
     }
 
+    if (resolved.id === 'environment') {
+      // 环境贴图作背景（全景预设）：纹理由引擎通过 setEnvironmentBackground 提供
+      this.disposeGradientTexture()
+      if (this.environmentTexture) {
+        this.scene.background = this.environmentTexture
+        this.scene.backgroundIntensity = this.environmentIntensity ?? 1
+        this.scene.backgroundBlurriness = this.environmentBlurriness ?? 0.25
+      } else {
+        // 没有环境贴图（例如环境来源为"无环境"）时退化为纯色，避免背景变成 null
+        this.scene.background = new Color(this.backgroundColor)
+      }
+      return this.mode
+    }
+
     if (resolved.id === 'solid') {
       this.scene.background = new Color(this.backgroundColor)
       this.disposeGradientTexture()
@@ -162,6 +177,17 @@ export class Stage {
     // 拿不到 Canvas 时（极少数环境）回退为纯色，绝不让背景变成 null
     this.scene.background = this.gradientTexture ?? new Color(this.backgroundColor)
     return this.mode
+  }
+
+  /**
+   * 由引擎提供环境贴图（PMREM 结果）。
+   * 它既用于 IBL（scene.environment），也可以在 background=environment 时直接当背景。
+   */
+  setEnvironmentBackground(texture, { intensity = 1, blurriness = 0.25 } = {}) {
+    this.environmentTexture = texture ?? null
+    this.environmentIntensity = Number.isFinite(intensity) ? intensity : 1
+    this.environmentBlurriness = Number.isFinite(blurriness) ? blurriness : 0.25
+    if (this.mode === 'environment') this.setBackground({ mode: 'environment' })
   }
 
   /* --------------------------- 辅助显示（网格/坐标轴） --------------------------- */

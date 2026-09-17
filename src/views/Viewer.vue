@@ -59,6 +59,9 @@
           <el-tab-pane label="显示" name="display">
             <DisplayPanel />
           </el-tab-pane>
+          <el-tab-pane label="光照" name="lighting">
+            <LightingPanel />
+          </el-tab-pane>
         </el-tabs>
       </el-aside>
     </el-container>
@@ -91,6 +94,7 @@ import LoadingOverlay from '../components/layout/LoadingOverlay.vue'
 import ViewerStatusBar from '../components/layout/ViewerStatusBar.vue'
 import ViewerToolbar from '../components/layout/ViewerToolbar.vue'
 import DisplayPanel from '../components/panels/DisplayPanel.vue'
+import LightingPanel from '../components/panels/LightingPanel.vue'
 import ModelInfoPanel from '../components/panels/ModelInfoPanel.vue'
 import ModelTreePanel from '../components/panels/ModelTreePanel.vue'
 import ModelCanvas from '../components/viewer/ModelCanvas.vue'
@@ -100,6 +104,7 @@ import { resolveFormatById } from '../constants/formats.js'
 import { DEFAULT_VIEW_PRESET, VIEW_PRESETS } from '../core/three/viewPresets.js'
 import { capabilities } from '../platform/index.js'
 import { useDisplayStore } from '../stores/displayStore.js'
+import { useLightingStore } from '../stores/lightingStore.js'
 import { useModelStore } from '../stores/modelStore.js'
 import { useSettingsStore } from '../stores/settingsStore.js'
 import { formatBytes, formatCount } from '../utils/format.js'
@@ -108,6 +113,7 @@ const router = useRouter()
 const model = useModelStore()
 const settings = useSettingsStore()
 const display = useDisplayStore()
+const lighting = useLightingStore()
 
 // 引擎是重对象：用 shallowRef 只做引用传递，避免被深度代理
 const engineRef = shallowRef(null)
@@ -132,7 +138,7 @@ const treeTabLabel = computed(() =>
 )
 
 onMounted(async () => {
-  await Promise.all([settings.load(), display.load()])
+  await Promise.all([settings.load(), display.load(), lighting.load()])
   unlistenDrop = await registerDropTarget(stageRef.value)
 })
 

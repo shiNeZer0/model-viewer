@@ -84,3 +84,49 @@ export async function touchRecentFile({ filePath, fileName, formatId, sizeBytes 
 export async function clearRecentFiles() {
   localStorage.removeItem(RECENT_KEY)
 }
+
+/* ----------------------------- 光照主题（M3） ----------------------------- */
+
+const THEMES_KEY = 'mv.lightingThemes'
+
+function readThemes() {
+  const themes = readJson(THEMES_KEY, [])
+  return Array.isArray(themes) ? themes : []
+}
+
+function writeThemes(themes) {
+  writeJson(THEMES_KEY, themes)
+}
+
+export async function listLightingThemes() {
+  return readThemes().sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0))
+}
+
+/** 同名主题覆盖更新（与桌面端 SQLite 的 ON CONFLICT(name) 行为一致） */
+export async function upsertLightingTheme({ name, payload }) {
+  const themes = readThemes()
+  const now = Date.now()
+  const existing = themes.find((theme) => theme.name === name)
+
+  if (existing) {
+    existing.payload = payload
+    existing.updated_at = now
+  } else {
+    const nextId = themes.reduce((max, theme) => Math.max(max, Number(theme.id) || 0), 0) + 1
+    themes.push({ id: nextId, name, payload, created_at: now, updated_at: now })
+  }
+  writeThemes(themes)
+}
+
+export async function renameLightingTheme(id, name) {
+  const themes = readThemes()
+  const target = themes.find((theme) => String(theme.id) === String(id))
+  if (!target) return
+  target.name = name
+  target.updated_at = Date.now()
+  writeThemes(themes)
+}
+
+export async function deleteLightingTheme(id) {
+  writeThemes(readThemes().filter((theme) => String(theme.id) !== String(id)))
+}

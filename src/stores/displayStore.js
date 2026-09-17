@@ -105,6 +105,22 @@ export const useDisplayStore = defineStore('display', () => {
     idleMs: idleMs.value,
   }))
 
+  /** 主题快照用：背景相关设置 */
+  const backgroundSnapshot = computed(() => ({
+    mode: background.value,
+    color: backgroundColor.value,
+    gradientTop: gradientTop.value,
+    gradientBottom: gradientBottom.value,
+  }))
+
+  /** 主题快照用：色调相关设置 */
+  const renderSnapshot = computed(() => ({
+    toneMapping: toneMapping.value,
+    exposure: exposure.value,
+    saturation: saturation.value,
+    postFxEnabled: postFxEnabled.value,
+  }))
+
   async function load() {
     try {
       const saved = await readAllSettings()
@@ -291,6 +307,8 @@ export const useDisplayStore = defineStore('display', () => {
     loaded,
     loadError,
     toEngineSettings,
+    backgroundSnapshot,
+    renderSnapshot,
     load,
     update,
     setNotes,

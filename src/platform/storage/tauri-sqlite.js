@@ -79,3 +79,35 @@ export async function clearRecentFiles() {
   const db = await getDb()
   await db.execute('DELETE FROM recent_files')
 }
+
+/* ----------------------------- 光照主题（M3） ----------------------------- */
+
+export async function listLightingThemes() {
+  const db = await getDb()
+  return db.select(
+    'SELECT id, name, payload, created_at, updated_at FROM lighting_themes ORDER BY updated_at DESC',
+  )
+}
+
+/** 同名主题覆盖更新（用户再次保存同名主题视为修改） */
+export async function upsertLightingTheme({ name, payload }) {
+  const db = await getDb()
+  await db.execute(
+    `INSERT INTO lighting_themes (name, payload, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(name) DO UPDATE SET payload = excluded.payload, updated_at = CURRENT_TIMESTAMP`,
+    [name, JSON.stringify(payload)],
+  )
+}
+
+export async function renameLightingTheme(id, name) {
+  const db = await getDb()
+  await db.execute(
+    'UPDATE lighting_themes SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [name, id],
+  )
+}
+
+export async function deleteLightingTheme(id) {
+  const db = await getDb()
+  await db.execute('DELETE FROM lighting_themes WHERE id = ?', [id])
+}

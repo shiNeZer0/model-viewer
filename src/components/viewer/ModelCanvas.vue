@@ -9,6 +9,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { useViewerEngine } from '../../composables/useViewerEngine.js'
 import { useDisplayStore } from '../../stores/displayStore.js'
+import { useLightingStore } from '../../stores/lightingStore.js'
 import { useModelStore } from '../../stores/modelStore.js'
 import { useSettingsStore } from '../../stores/settingsStore.js'
 
@@ -18,10 +19,13 @@ const containerRef = ref(null)
 const settings = useSettingsStore()
 const display = useDisplayStore()
 const model = useModelStore()
+const lighting = useLightingStore()
 const { engine, mount, unmount } = useViewerEngine()
 
 /** 引擎消费的设置快照；任何显示设置变化都会让这个 computed 失效 */
 const engineSettings = computed(() => display.toEngineSettings)
+/** 光照快照（三点光源 + 环境贴图） */
+const lightingSettings = computed(() => lighting.toEngineSettings)
 
 /** 把引擎侧的检查数据（层级树 + 包围盒）同步成纯数据交给 store */
 function syncInspection() {
@@ -61,6 +65,8 @@ onMounted(() => {
     created.setAutoRotate(settings.autoRotate, settings.autoRotateSpeed)
     const warnings = created.applyDisplaySettings(engineSettings.value)
     display.setNotes(warnings)
+    // 光照在显示设置之后应用：这样"环境贴图当背景"能拿到刚生成好的纹理
+    created.applyLighting(lightingSettings.value)
     model.setBounds(created.getModelBounds())
     emit('ready', created)
   } catch (error) {
@@ -76,8 +82,16 @@ onMounted(() => {
 
 onBeforeUnmount(() => unmount())
 
+/** 把光照状态推给引擎（光源位置/颜色/强度 + 环境贴图） */
+function applyLightingSettings() {
+  engine.value?.applyLighting(lightingSettings.value)
+}
+
 // 显示设置变化 → 引擎
 watch(engineSettings, applyDisplaySettings)
+
+// 光照变化 → 引擎（环境贴图只在来源/颜色变化时重新生成）
+watch(lightingSettings, applyLightingSettings)
 
 // 模型换了 → 重新抽取层级与包围盒（root 在引擎 setModel 之后才写入 store）
 watch(() => model.root, syncInspection)

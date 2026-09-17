@@ -43,3 +43,21 @@ export async function touchRecentFile(entry) {
 export async function clearRecentFiles() {
   return (await loadBackend()).clearRecentFiles()
 }
+
+/* ----------------------------- 光照主题（M3） ----------------------------- */
+
+export async function listLightingThemes() {
+  return (await loadBackend()).listLightingThemes()
+}
+
+export async function upsertLightingTheme(theme) {
+  return (await loadBackend()).upsertLightingTheme(theme)
+}
+
+export async function renameLightingTheme(id, name) {
+  return (await loadBackend()).renameLightingTheme(id, name)
+}
+
+export async function deleteLightingTheme(id) {
+  return (await loadBackend()).deleteLightingTheme(id)
+}

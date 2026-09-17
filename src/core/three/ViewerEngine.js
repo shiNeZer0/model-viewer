@@ -21,8 +21,10 @@ import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js'
 
 import { BoundingBoxOverlay } from './boundingBox.js'
 import { disposeObject3D } from './disposal.js'
+import { EnvironmentManager } from './environment.js'
 import { buildHierarchy } from './hierarchy.js'
 import { DEFAULT_IDLE_MS, createIdlePolicy, hasContinuousWork } from './idlePolicy.js'
+import { LightingRig, createDefaultLightingState, normalizeLightingState } from './lighting.js'
 import { ModelPlacement } from './modelPlacement.js'
 import { PostFx, normalizePostFxSettings } from './postfx.js'
 import { createRenderLoop } from './renderLoop.js'
@@ -120,16 +122,11 @@ export class ViewerEngine {
     // 相机被程序化改动（视图预设/适配）也要唤醒渲染循环
     this.controls.addEventListener('change', () => this.noteActivity())
 
-    // M0 的最小照明：没有它，自带材质的模型会一片黑。
-    // M3 的三点光源 + 环境贴图模块会接管这里。
-    this.lights = []
-    const hemisphere = new HemisphereLight(0xffffff, 0x333344, 1.6)
-    const keyLight = new DirectionalLight(0xffffff, 2.2)
-    keyLight.position.set(4, 6, 5)
-    const fillLight = new DirectionalLight(0xcfe3ff, 0.8)
-    fillLight.position.set(-5, 1.5, -3)
-    this.lights.push(hemisphere, keyLight, fillLight)
-    this.lights.forEach((light) => this.scene.add(light))
+    // M3：三点光源装置接管照明（主光/补光/轮廓光 + 半球环境光）；
+    // 环境贴图由 EnvironmentManager 生成（程序化渐变 / RoomEnvironment / 导入的 HDR）
+    this.lightingRig = new LightingRig(this.scene)
+    this.environment = new EnvironmentManager(this.renderer, this.scene)
+    this.lightingState = createDefaultLightingState()
 
     container.appendChild(this.canvas)
 
@@ -161,6 +158,9 @@ export class ViewerEngine {
 
     // M2：边界框与尺寸标注（CSS2D 标签复用引擎里的 CSS2D 渲染层）
     this.bbox = new BoundingBoxOverlay(this.scene)
+
+    // M3：应用初始光照（默认影棚预设），保证首屏就有正确的打光
+    this.applyLighting(this.lightingState)
 
     this.idle = createIdlePolicy({ idleMs: this.display.idleMs })
 
@@ -384,6 +384,28 @@ export class ViewerEngine {
     this.noteActivity()
 
     return warnings
+  }
+
+  /**
+   * 应用光照状态：三点光源 + 环境贴图（+ 环境贴图作为背景）。
+   * 幂等，可反复调用；环境贴图只在来源/颜色变化时重新生成（EnvironmentManager 内部有缓存键）。
+   */
+  applyLighting(lightingState) {
+    this.lightingState = normalizeLightingState(lightingState ?? this.lightingState)
+    this.lightingRig.apply(this.lightingState)
+
+    const texture = this.environment.apply(this.lightingState.environment)
+    // 环境贴图既提供 IBL，也可以在 background=environment 时直接当背景（全景预设）
+    this.stage.setEnvironmentBackground(texture, {
+      intensity: this.lightingState.environment.intensity,
+      blurriness: 0.25,
+    })
+    if (this.display.background === 'environment') {
+      this.stage.setBackground({ mode: 'environment' })
+    }
+
+    this.noteActivity()
+    return this.lightingState
   }
 
   /* ------------------------------- 模型与相机 ------------------------------- */
@@ -642,6 +664,8 @@ export class ViewerEngine {
     this.postFx.dispose()
     this.stage.dispose()
     this.bbox?.dispose()
+    this.lightingRig?.dispose()
+    this.environment?.dispose()
     this.cssRenderer.domElement.remove()
     this.renderer.dispose()
     this.canvas.remove()
