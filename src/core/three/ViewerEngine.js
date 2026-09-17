@@ -23,6 +23,7 @@ import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js'
 import { resolveExportRatio } from '../screenshot.js'
 import { BoundingBoxOverlay } from './boundingBox.js'
 import { AnimationController, MAX_FRAME_DELTA } from './animation.js'
+import { CameraTween, DEFAULT_TWEEN_MS, normalizePose } from './cameraTween.js'
 import { disposeObject3D } from './disposal.js'
 import { EnvironmentManager, loadEquirectangularTexture } from './environment.js'
 import { buildHierarchy } from './hierarchy.js'
@@ -79,6 +80,8 @@ export class ViewerEngine {
     this.lastBox = null
     this.lastPresetId = DEFAULT_VIEW_PRESET
     this.animationPlaying = false
+    /** 相机平滑过渡（视角切换用，见 cameraTween.js） */
+    this.cameraTween = new CameraTween()
     this.disposed = false
     this.fps = 0
     this.onRenderError = options.onRenderError
@@ -133,6 +136,8 @@ export class ViewerEngine {
     this.controls.autoRotateSpeed = 2
     // 相机被程序化改动（视图预设/适配）也要唤醒渲染循环
     this.controls.addEventListener('change', () => this.noteActivity())
+    // 用户一上手就打断相机补间：否则补间会与鼠标拖动抢控制权，表现为"拖动被拽回去"
+    this.controls.addEventListener('start', () => this.cancelCameraTween())
 
     // M3：三点光源装置接管照明（主光/补光/轮廓光 + 半球环境光）；
     // 环境贴图由 EnvironmentManager 生成（程序化渐变 / RoomEnvironment / 导入的 HDR）
@@ -245,7 +250,18 @@ export class ViewerEngine {
       : 0
     this.lastFrameTime = now
 
+    /*
+     * 顺序很关键：先推进相机补间（它直接写 camera.position / controls.target），
+     * 再调 controls.update() —— 后者每帧从"当前相机位置 - target"重算球坐标，
+     * 阻尼增量为 0 时不会覆盖我们刚写入的位姿。反过来写就会被 controls 抹掉。
+     */
+    const cameraMoving = this.advanceCameraTween(delta * 1000)
+
+    // 补间期间暂停转盘：两者都在改相机，同时生效会让相机"到不了目标视角"
+    const autoRotateEnabled = this.controls.autoRotate
+    if (cameraMoving) this.controls.autoRotate = false
     const controlsChanged = this.controls.update()
+    if (cameraMoving) this.controls.autoRotate = autoRotateEnabled
 
     // 动画推进：只有播放中才真正改变姿势；同时把状态回写给 UI
     const animationState = this.updateAnimation(delta)
@@ -254,6 +270,7 @@ export class ViewerEngine {
     const continuous = hasContinuousWork({
       autoRotate: this.controls.autoRotate,
       animationPlaying: this.animationPlaying,
+      cameraMoving,
     })
 
     if (!controlsChanged && !continuous && !this.idle.shouldRender(now)) return
@@ -261,6 +278,87 @@ export class ViewerEngine {
     this.renderFrame()
     // 继续排帧；若期间进入空闲，下一帧的决策会再次把它停掉
     this.loop.start()
+  }
+
+  /* --------------------------- 相机平滑过渡 --------------------------- */
+
+  /**
+   * 系统级「减少动效」偏好。
+   * 这类偏好下相机直接落位：动画对前庭敏感人群是负面体验，也违背用户显式设置。
+   */
+  prefersReducedMotion() {
+    return Boolean(
+      typeof window !== 'undefined' &&
+        typeof window.matchMedia === 'function' &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    )
+  }
+
+  /** 把补间算出的位姿写给相机与控制器 */
+  applyCameraPose({ position, target }) {
+    this.camera.position.set(position[0], position[1], position[2])
+    this.controls.target.set(target[0], target[1], target[2])
+  }
+
+  /** 每帧推进补间，返回本帧相机是否仍在移动 */
+  advanceCameraTween(deltaMs) {
+    if (!this.cameraTween.active) return false
+    const sample = this.cameraTween.update(deltaMs)
+    if (!sample) return false
+
+    this.applyCameraPose(sample)
+    // 收尾后仍然记一次活动：让最后一帧稳稳画出来，而不是刚好在空闲边界上被丢掉
+    if (sample.done) this.noteActivity()
+    return this.cameraTween.active
+  }
+
+  /**
+   * 平滑移动到目标位姿（视角切换用）。
+   * @returns {boolean} 是否真的启动了动画（false = 已瞬时落位：起点终点相同 / 减少动效 / 位姿非法）
+   */
+  animateCameraTo(pose, { durationMs = DEFAULT_TWEEN_MS } = {}) {
+    const destination = normalizePose(pose)
+    if (!destination) return false
+
+    const applyInstantly = () => {
+      this.applyCameraPose(destination)
+      this.controls.update()
+      this.noteActivity()
+    }
+
+    if (this.prefersReducedMotion()) {
+      applyInstantly()
+      return false
+    }
+
+    const started = this.cameraTween.start(
+      {
+        from: { position: this.camera.position.toArray(), target: this.controls.target.toArray() },
+        to: destination,
+      },
+      { durationMs },
+    )
+    if (!started) {
+      applyInstantly()
+      return false
+    }
+
+    /*
+     * 清掉帧时间基准：从空闲唤醒时第一帧的 delta 会被夹到 MAX_FRAME_DELTA（100ms），
+     * 对 320ms 的补间等于"起步就跳掉近 1/3"，看起来像卡了一下。清空后第一帧 delta=0。
+     */
+    this.lastFrameTime = 0
+    // 视角多由侧栏面板或快捷键触发，此时循环可能已经因空闲停掉，必须自己唤醒（否则"点了没反应"）
+    this.noteActivity()
+    return true
+  }
+
+  /** 打断补间（用户接管相机 / 模型被替换），就停在当前位置 */
+  cancelCameraTween() {
+    if (!this.cameraTween.active) return false
+    this.cameraTween.cancel()
+    this.noteActivity()
+    return true
   }
 
   /**
@@ -633,6 +731,9 @@ export class ViewerEngine {
    * @returns {{disposal: object|null, fit: object|null, shadeWarnings: string[]}}
    */
   setModel(root, { fit = true, presetId, animations = [], formatId = '' } = {}) {
+    // 换模型时旧的补间终点已经失效：不取消的话相机会继续飞向"上一个模型"的视角
+    this.cancelCameraTween()
+
     let disposal = null
     if (this.currentRoot) {
       this.scene.remove(this.currentRoot)
@@ -717,8 +818,13 @@ export class ViewerEngine {
    * 把相机拉到能完整看到对象的距离，并按预设方向摆放。
    * 距离按包围球半径与视角计算（取水平/垂直中较小者），padding 留出边距。
    * @param {object} [options.box] 已知的包围盒（避免重复计算）
+   * @param {boolean} [options.animate] 是否平滑过渡。**默认瞬时**：加载模型、
+   *   重新摆放、尺寸变化等程序化路径需要立刻到位；只有用户点"切视角"才传 true。
    */
-  fitToObject(object = this.currentRoot, { padding = 1.25, presetId, box = null } = {}) {
+  fitToObject(
+    object = this.currentRoot,
+    { padding = 1.25, presetId, box = null, animate = false } = {},
+  ) {
     if (!object) return null
 
     const targetBox = box ?? new Box3().setFromObject(object)
@@ -734,13 +840,19 @@ export class ViewerEngine {
       padding,
     })
 
-    this.camera.position.set(...placement.position)
+    // near/far 立刻按**目标**距离设定：near 极小、far 很大，对补间的起点与终点都安全，
+    // 不会出现"飞过去的过程中被裁切"
     this.camera.near = Math.max(placement.distance / 1000, 1e-4)
     this.camera.far = placement.distance + sphere.radius * 20
     this.camera.updateProjectionMatrix()
 
-    this.controls.target.copy(sphere.center)
-    this.controls.update()
+    const destination = { position: placement.position, target: sphere.center.toArray() }
+    if (animate) {
+      this.animateCameraTo(destination)
+    } else {
+      this.applyCameraPose(destination)
+      this.controls.update()
+    }
 
     this.lastBox = targetBox
     this.lastPresetId = placement.presetId
@@ -749,9 +861,12 @@ export class ViewerEngine {
     return { box, sphere, distance: placement.distance, presetId: placement.presetId }
   }
 
-  /** 切到某个标准视图（前/后/左/右/上/下/等轴测） */
-  setViewPreset(presetId) {
-    return this.fitToObject(this.currentRoot, { presetId })
+  /**
+   * 切到某个标准视图（前/后/左/右/上/下/等轴测）。
+   * 默认平滑过渡：这是用户主动"换一个观察方向"，瞬移会让人失去空间方位感。
+   */
+  setViewPreset(presetId, { animate = true } = {}) {
+    return this.fitToObject(this.currentRoot, { presetId, animate })
   }
 
   /**
@@ -888,6 +1003,8 @@ export class ViewerEngine {
     if (this.disposed) return
     this.disposed = true
     this.stop()
+    // 直接 cancel 而不是 cancelCameraTween()：后者会 noteActivity 重新排帧，在销毁路径上是错的
+    this.cameraTween.cancel()
     this.resizeObserver.disconnect()
     this.canvas.removeEventListener('webglcontextlost', this.contextLostHandler)
     for (const eventName of this.activityEvents) {

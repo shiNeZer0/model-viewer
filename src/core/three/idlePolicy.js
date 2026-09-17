@@ -45,7 +45,15 @@ export function createIdlePolicy({ idleMs = DEFAULT_IDLE_MS } = {}) {
   }
 }
 
-/** 是否存在必须持续渲染的工作 */
-export function hasContinuousWork({ autoRotate = false, animationPlaying = false } = {}) {
-  return Boolean(autoRotate || animationPlaying)
+/**
+ * 是否存在必须持续渲染的工作。
+ * `cameraMoving` 是相机平滑过渡（视角切换）期间的状态：补间期间必须持续出帧，
+ * 否则 idleMs 一到循环就停，动画会僵在半路。
+ */
+export function hasContinuousWork({
+  autoRotate = false,
+  animationPlaying = false,
+  cameraMoving = false,
+} = {}) {
+  return Boolean(autoRotate || animationPlaying || cameraMoving)
 }

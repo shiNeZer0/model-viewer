@@ -49,10 +49,15 @@ describe('createIdlePolicy', () => {
 })
 
 describe('hasContinuousWork', () => {
-  it('转盘或动画任一为真即需持续渲染', () => {
+  it('转盘 / 动画播放 / 相机补间任一为真即需持续渲染', () => {
     expect(hasContinuousWork()).toBe(false)
     expect(hasContinuousWork({ autoRotate: true })).toBe(true)
     expect(hasContinuousWork({ animationPlaying: true })).toBe(true)
+    expect(hasContinuousWork({ cameraMoving: true })).toBe(true)
     expect(hasContinuousWork({ autoRotate: false, animationPlaying: false })).toBe(false)
+    // 补间期间 idleMs 到点也不能停：否则动画会僵在半路
+    expect(
+      hasContinuousWork({ autoRotate: false, animationPlaying: false, cameraMoving: false }),
+    ).toBe(false)
   })
 })
