@@ -182,3 +182,15 @@
 2) **"X is not defined" + "Cannot access 'instance' before initialization" 同时出现时的解读**：前者是根因（引用了未导入的标识符），后者是 Vue 在组件初始化期间走错误处理路径触发的 TDZ 次生报错。**不要被后者的"Vue 内部感"带偏去查框架**，先解决前者；本例两条 TDZ 在修好前者后自然消失。
 
 3) **store 没有单测 = 验证缺口**。modelStore 此前 0 个用例，所以"用了 API 却没 import"这种最基础的问题能一路漏到用户侧（引用未导入标识符只在**调用时**才抛错，构建/eslint 都不一定拦得住）。Pinia setup store 在 Node 下可直接单测（setActivePinia(createPinia())），本轮补齐 7 例后即覆盖状态流转、进度夹取、纯数字快照断言、层级就地补丁与 reset 清理。凡新增 store 一律同步补最小单测集。
+- [2026-09-17 08:35] [经验教训] CSS 百分比高度链静默失效：overflow 不触发导致内容被裁且滚不到；纯布局问题测不出，只能靠高度链自查 — CSS 高度链陷阱（model-viewer 实测，用户报"侧边光照栏下方设置无法到达 / 侧边栏未实现滚动"）：
+
+【根因】给 el-tabs 用了 `display:flex; flex-direction: column` + `.el-tabs__content{flex:1; min-height:0; overflow:hidden}`，但**漏了给 `.el-tab-pane` 确定高度**。于是面板里的 `height: 100%` 相对于 auto 高度的中间容器会**静默退化为 auto**，面板自身的 `overflow-y: auto` 永远不触发，超出内容被祖先的 `overflow: hidden` 裁掉且滚不到。四个面板（模型信息/层级/显示/光照）都依赖同一条高度链，所以全中——最后是内容最长的光照页先暴露。
+
+【修法】两处一起做才稳：
+1) `.el-tab-pane { height: 100% }`（补齐高度链，让面板的 overflow 生效）；
+2) `.el-tabs__content { overflow-y: auto }` 作为兜底（即使某个面板自身高度链再断，内容区仍能滚到最后一行）。
+只做 1 会在任何一处中间容器再加一层时再次失效，只做 2 会出现嵌套滚动条。两个独立滚动机制里"至少一个能工作"是这里的关键设计。
+
+【通用判断法】凡是"内容够不到 / 滚不动 / 被裁切"的 UI 现象，先沿 DOM 往上问两件事：**(a) 这个 overflow:auto 的元素有没有确定高度？(b) 它的高度来自 `height:100%` 还是 flex?** 若是百分比，就要检查整条链上每一层父元素是否都有确定高度（flex item + min-height:0 也算确定高度）；任何一层是 auto，百分比就会静默退化为 auto，且**不会报错、不会有警告**。
+
+【流程教训】**纯视觉布局问题无法被单元测试与生产构建发现**。本轮 M1 引入 tabs 布局到 M3 才被用户发现，中间三次"验证全绿"都不覆盖它。缓解：改动中间层布局容器（tabs/collapse/card/scrollbar）后必须自问高度链是否完整；M6 可考虑引入一次截图级冒烟检查（Playwright）来兜住这一类回归。

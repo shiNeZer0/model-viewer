@@ -262,8 +262,14 @@ async function onRemoveTheme(row) {
   flex-direction: column;
   gap: 8px;
   padding: 12px;
-  overflow-y: auto;
+  /* 双保险，确保这个面板**自己**能滚动，不依赖祖先的高度链：
+     1) height:100% —— 祖先高度链完整时精确填满标签页内容区；
+     2) max-height 由视口推导（顶栏 52 + 状态栏 30 + 标签页头约 48），
+        任何一层祖先高度退化成 auto 时，面板仍能拿到确定高度，
+        overflow-y 才会生效（否则百分比高度静默退化、内容被裁掉够不到）。 */
   height: 100%;
+  max-height: calc(100vh - 130px);
+  overflow-y: auto;
 }
 
 .lighting-panel__alert {
