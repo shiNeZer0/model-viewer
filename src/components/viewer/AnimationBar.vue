@@ -109,6 +109,15 @@ const formatDuration = formatClipDuration
   width: 150px;
 }
 
+/*
+ * Element Plus 会给相邻按钮额外加 `margin-left: 12px`，与容器 flex gap 叠加后
+ * 播放/停止之间会比其他元素宽出 12px（用户反馈"两个按钮之间异常"）。
+ * 间距统一交给容器的 gap 控制，这里把组件自带的外边距清零。
+ */
+.animation-bar :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
 .animation-bar__timeline {
   width: 200px;
   margin: 0 2px;
