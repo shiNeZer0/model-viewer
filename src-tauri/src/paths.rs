@@ -59,4 +59,20 @@ mod tests {
         assert!(target.is_dir());
         std::fs::remove_dir_all(&target).ok();
     }
+
+    /// 回归护栏：配置里**不允许**出现 `~` 展开的数据库 URL。
+    ///
+    /// 实测（tauri-plugin-sql 的社区 fork）：只要 preload 里出现 `sqlite:~...`，
+    /// 其 `expand_tilde()` 就会执行 `env::var("HOME").expect("HOME 环境变量不存在")`；
+    /// 而 Windows 默认**没有 HOME**（只有 USERPROFILE），于是应用一启动就 panic（exit 101）。
+    /// 本项目不需要 preload：数据库由前端用绝对路径 `Database.load` 打开（迁移会在这条命令里执行），
+    /// 文件不存在时 sqlx 也会自动创建。
+    #[test]
+    fn 配置里不应出现波浪号数据库路径() {
+        let config = include_str!("../tauri.conf.json");
+        assert!(
+            !config.contains("~"),
+            "tauri.conf.json 里出现 `~`：sql 插件的 expand_tilde 依赖 HOME 环境变量，Windows 下会 panic"
+        );
+    }
 }

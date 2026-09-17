@@ -40,6 +40,9 @@ pub fn run() {
         dir
     };
     let log_path = app_dir.join("app.log").to_string_lossy().to_string();
+    // 数据库路径用**绝对路径**，不写 `sqlite:~...`：SQL 插件社区 fork 的 expand_tilde()
+    // 会 `env::var("HOME").expect(...)`，而 Windows 默认没有 HOME（只有 USERPROFILE），
+    // 一旦在配置里用 `~` 就会在插件初始化阶段 panic。详见设计文档 §30。
     let db_path = format!("sqlite:{}", app_dir.join("app.db").to_string_lossy());
 
     tauri::Builder::default()
