@@ -69,6 +69,23 @@
 【测试】modelPlacement.test.js 13 例（四种偏移组合、幂等不漂移、开关还原、自带旋转缩放仍正确、空对象）+ displayStore 2 例；vitest 144/144、cargo 未动、双端构建通过。
 
 【注意】摆放是场景空间平移，若用户需要查看模型文件里的真实坐标，关掉开关即可（已做成一键还原）。
+- [2026-09-17 08:08] [工作记录] model-viewer M2 完成：层级树 + 边界框尺寸标注 + 单位换算（189 测试全绿） — E:\AI-Coding\model-viewer 的 M2 里程碑（模型检查：层级树 + 边界框尺寸 + 单位换算）已完成并提交（commit fb8b890，工作区干净）。
+
+【新增纯逻辑模块（均带单测）】
+- src/core/three/hierarchy.js：buildHierarchy(root) 把 Object3D 树抽成**纯数据树**（id=uuid、label、type、isMesh、visible、triangles、vertices、children），three 对象引用留在引擎侧非响应式 nodeById Map 里（避免进 Vue 响应式）；skipEmpty 跳过空叶子；节点数上限 MAX_HIERARCHY_NODES=5000 截断并置 truncated。
+- src/core/three/visibility.js：**可见性解析层**。resolveNodeVisibility({isMesh,userOverride,originalVisible,hideSolids}) 纯函数；applyVisibility(root,{overrides,originals,hideSolids}) 落盘并返回变化数；captureVisibility(root) 记录模型原始可见性。
+- src/core/three/units.js：LENGTH_UNITS(raw/mm/cm/m/in)+DISPLAY_UNIT_IDS(auto含)；toMeters/fromMeters/convertLength/autoPickUnit/formatLength。语义：sourceUnit='raw' 表示**不换算、按原始数值显示**（避免虚假精度）；声明真实单位后按 displayUnit（auto 按量级挑）换算。
+- src/core/three/boundingBox.js：describeDimensions/describeCorner/dimensionLabelPositions 纯函数 + BoundingBoxOverlay 类（Box3Helper + CSS2D 三个轴向标签 + 最小角标签；Node 无 DOM 时自动只画线框不抛错）。
+
+【架构性修复（重要）】原 ShadeController 直接改 mesh.visible（仅线框隐藏实体、切回按"原始可见性"整体重置）。加上层级树的手动隐藏后必然出现"用户隐藏的网格切一次着色模式就自己回来"——与 §16 辅助显示是同一类缺陷（隐式状态覆盖用户意图）。已把可见性从着色模块彻底摘出：ShadeController 只负责材质与叠加层，visible 一律由 visibility.js 解析（用户开关 ?? 模型原始值，再由 hidesSolid 决定实体隐藏）。shadeModes.test.js 相应改为断言"控制器绝不修改可见性"，并新增 visibility.test.js 锁住"用户隐藏的网格在模式来回切换后仍隐藏"。
+
+【测试抓到的口径 bug】buildHierarchy 最初对任何带几何体的节点都计三角面 → 点云节点也报 12 面 → 逐节点面数之和 36 ≠ 整体统计 24。现只对 isMesh/isSkinnedMesh 计面数，与 stats.js 统一。
+
+【引擎 API】getHierarchy / setNodeVisible(id,visible) / setAllNodesVisible / resetNodeVisibility（返回权威 flags 供 UI 回填）/ collectVisibilityFlags / focusNode(id)（取节点世界包围盒 → controls.target + 重新适配）/ refreshBoundsOverlay / getModelBounds（已有）。
+
+【UI】ModelTreePanel.vue（第三标签页「层级」，逐节点隐藏开关+聚焦+全部显示/隐藏/重置）；ModelInfoPanel 新增「尺寸与单位」分区（边界框开关、模型单位、显示单位、长宽高、min/max 角坐标）；快捷键 B 切换边界框；modelStore 新增 hierarchy/bounds/selectedNodeId 与**就地补丁**方法（不替换数组，保留 el-tree 展开态；bounds 里的 Box3 用 markRaw 包住避免被深度代理）；ModelCanvas 在 root 变化与设置变化时把引擎数据同步成纯数据。
+
+【验证】vitest 189/189（20 文件）、cargo 24/24、pnpm build 通过。GUI 验收（层级树可见性/聚焦、边界框标注、单位换算显示）需用户在本机 pnpm dev 确认。
 
 ## 经验教训 Lessons Learned
 

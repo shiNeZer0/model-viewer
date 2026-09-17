@@ -6,7 +6,7 @@
  */
 
 import { defineStore } from 'pinia'
-import { computed, markRaw, ref, shallowRef } from 'vue'
+import { computed, ref, shallowRef } from 'vue'
 
 const STATUS = {
   empty: 'empty',
@@ -36,7 +36,8 @@ export const useModelStore = defineStore('model', () => {
   const hierarchy = ref([])
   const hierarchyCount = ref(0)
   const hierarchyTruncated = ref(false)
-  const bounds = ref(null)
+  /** 包围盒纯数据快照：{ size, min, max, center }，每个字段是 {x,y,z} */
+  const boundsSnapshot = ref(null)
   const selectedNodeId = ref('')
 
   const root = shallowRef(null)
@@ -100,9 +101,22 @@ export const useModelStore = defineStore('model', () => {
     hierarchyTruncated.value = truncated
   }
 
-  function setBounds(nextBounds) {
-    // 包围盒里是 three 的 Box3/Vector3：整块标记为 raw，避免被 Vue 深度代理
-    bounds.value = nextBounds ? markRaw(nextBounds) : null
+  /**
+   * 只存**纯数据**（拆成数字）。
+   * three 的 Box3/Vector3 绝不放进 store：既避免被 Vue 深度代理，也不用再依赖
+   * markRaw 之类的额外 API —— 少一个运行期依赖就少一类"中间态炸掉"的可能。
+   */
+  function setBounds(bounds) {
+    if (!bounds) {
+      boundsSnapshot.value = null
+      return
+    }
+    boundsSnapshot.value = {
+      size: { x: bounds.size.x, y: bounds.size.y, z: bounds.size.z },
+      min: { x: bounds.min.x, y: bounds.min.y, z: bounds.min.z },
+      max: { x: bounds.max.x, y: bounds.max.y, z: bounds.max.z },
+      center: { x: bounds.center.x, y: bounds.center.y, z: bounds.center.z },
+    }
   }
 
   function setSelectedNode(nodeId) {
@@ -154,7 +168,7 @@ export const useModelStore = defineStore('model', () => {
     hierarchy.value = []
     hierarchyCount.value = 0
     hierarchyTruncated.value = false
-    bounds.value = null
+    boundsSnapshot.value = null
     selectedNodeId.value = ''
   }
 
@@ -189,7 +203,7 @@ export const useModelStore = defineStore('model', () => {
     hierarchy,
     hierarchyCount,
     hierarchyTruncated,
-    bounds,
+    bounds: boundsSnapshot,
     selectedNodeId,
     root,
     isReady,

@@ -117,6 +117,7 @@
 </template>
 
 <script setup>
+import { Box3, Vector3 } from 'three'
 import { computed } from 'vue'
 
 import { resolveFormatById } from '../../constants/formats.js'
@@ -139,13 +140,20 @@ const unitOptions = computed(() => ({
   sourceUnit: display.sourceUnit,
   displayUnit: display.displayUnit,
 }))
+/** store 里存的是纯数字快照，这里临时拼一个 Box3 复用已验证的格式化函数 */
+const boundsBox = computed(() => {
+  const snapshot = model.bounds
+  if (!snapshot) return null
+  return new Box3(
+    new Vector3(snapshot.min.x, snapshot.min.y, snapshot.min.z),
+    new Vector3(snapshot.max.x, snapshot.max.y, snapshot.max.z),
+  )
+})
 const dimensions = computed(() =>
-  model.bounds?.box ? describeDimensions(model.bounds.box, unitOptions.value) : [],
+  boundsBox.value ? describeDimensions(boundsBox.value, unitOptions.value) : [],
 )
 const corner = computed(() =>
-  model.bounds?.box
-    ? describeCorner(model.bounds.box, unitOptions.value)
-    : { min: '—', max: '—' },
+  boundsBox.value ? describeCorner(boundsBox.value, unitOptions.value) : { min: '—', max: '—' },
 )
 const formatLabel = computed(() => {
   const format = resolveFormatById(model.formatId)
