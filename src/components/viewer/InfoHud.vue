@@ -1,6 +1,6 @@
 <template>
-  <!-- 信息浮层：默认显示在渲染区左上角；快捷键 I 或右上角按钮可隐藏/展开 -->
-  <div class="info-hud">
+  <!-- 信息浮层：有模型时才出现；快捷键 I 或圆点按钮折叠/展开 -->
+  <div v-if="model.hasModel" class="info-hud">
     <button
       v-if="!visible"
       class="info-hud__chip"
@@ -112,7 +112,8 @@ const dimensionText = computed(() => {
   padding: 8px 10px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 6px;
-  background: rgba(15, 17, 21, 0.72);
+  /* 半透明浮层：按用户要求透明度 0.3（更透，方便直接看模型） */
+  background: rgba(15, 17, 21, 0.3);
   color: var(--el-text-color-primary);
   backdrop-filter: blur(3px);
 }
@@ -175,7 +176,7 @@ const dimensionText = computed(() => {
   height: 22px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 50%;
-  background: rgba(15, 17, 21, 0.72);
+  background: rgba(15, 17, 21, 0.3);
   color: var(--el-text-color-regular);
   cursor: pointer;
   font-style: italic;

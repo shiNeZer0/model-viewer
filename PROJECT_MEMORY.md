@@ -224,18 +224,22 @@
 - 结论与用户侧动作：**重启 dev server**（必要时 touch 一下该文件触发重新转换）。仅靠强刷不一定有效，因为过期的是"服务端的转换缓存"而不是浏览器缓存。
 
 **硬规约（第二次教训后升级）**：任何情况下都不得在同一条消息里对同一个文件发多个 edit —— 并发写入不仅可能丢改动，还可能让 dev server 留下一份"源码已对、服务端仍错"的缓存，排查成本远高于多花一轮消息。
-- [2026-09-17 08:35] [经验教训] CSS 静默裁切两大家族：百分比高度链断裂（overflow 不触发）与 flex 子项被压缩（overflow:hidden 裁掉内容） — CSS 布局「静默裁切」两大家族（model-viewer 实测，用户先后报"侧边光照栏下方设置无法到达"与"三张光源卡片内容缺失"；两者现象都像"内容不够 / 看不到"，但根因不同，修法也不同）：
+- [2026-09-17 08:35] [经验教训] CSS 视觉异常三家族：高度链断裂、flex 子项被压缩、EP 自带外边距与 flex gap 叠加（含各自判断法与修法） — CSS 布局「视觉异常」的三个家族（model-viewer 实测；现象都像"界面不对"，但机制与修法各不相同）：
 
 【A. 百分比高度链断裂 → overflow 根本不触发】
 根因：`.el-tabs__content` 给了 `flex:1; min-height:0` 但**漏了给 `.el-tab-pane` 确定高度**，面板里的 `height:100%` 相对于 auto 高度的中间容器**静默退化为 auto**（不报错、不警告），面板自身的 `overflow-y:auto` 永不触发，超出内容被祖先 `overflow:hidden` 裁掉且滚不到。
-三层修法一起才稳：1) `.el-tab-pane{height:100%}` 补齐链；2) `.el-tabs__content{overflow-y:auto}` 兜底；3) 面板自身再写与祖先无关的确定高度 `max-height: calc(100vh - 130px)`（顶栏52+状态栏30+标签页头约48）——`height:100%` 与 `max-height` 并存：链完整则精确填满，链断裂则被兜住且 overflow 生效。
-判断法：沿 DOM 往上问"这个 overflow:auto 的元素有没有确定高度？高度来自 `height:100%` 还是 flex？"百分比就必须逐层检查；flex item + min-height:0 也算确定高度。
+三层修法一起才稳：1) `.el-tab-pane{height:100%}` 补齐链；2) `.el-tabs__content{overflow-y:auto}` 兜底；3) 面板自身再写与祖先无关的确定高度 `max-height: calc(100vh - 130px)`（顶栏52+状态栏30+标签页头约48）。
+判断法：沿 DOM 往上问"这个 overflow:auto 的元素有没有确定高度？高度来自 `height:100%` 还是 flex？"
 
-【B. flex 子项被压缩 + overflow:hidden → 内容被裁（本次新增，注意与 A 的区别）】
-根因：`.lighting-panel` 是**固定高度**的 flex 列容器；flex 子项的自动最小高度（`min-height:auto`）**只在 `overflow:visible` 时生效**，而 `el-card`/`el-alert` 自带 `overflow:hidden` → 子项可被压缩到低于内容高度，被挤掉的部分**既看不到也滚不到**。关键鉴别点：这种情况**滚动条其实在工作**（与 A 相反），所以"滚动了仍然看不到内容"要往这里查。
-修法：容器上写 `.panel > * { flex-shrink: 0 }`，约定"子项永远保持自然高度，溢出只由这一个滚动容器负责"；组件自身也显式写 `flex-shrink:0`，防止以后换布局又被挤扁。
+【B. flex 子项被压缩 + overflow:hidden → 内容被裁】
+根因：固定高度 flex 列容器里，子项的自动最小高度（`min-height:auto`）**只在 `overflow:visible` 时生效**，而 `el-card`/`el-alert` 自带 `overflow:hidden` → 子项可被压缩到低于内容高度，被挤掉的部分既看不到也滚不到。**关键鉴别点：这种情况滚动条其实在工作**（与 A 相反）。
+修法：容器上写 `.panel > * { flex-shrink: 0 }`，约定"子项永远保持自然高度，溢出只由这一个滚动容器负责"。
 
-【流程教训】纯视觉布局问题**无法被单元测试与生产构建发现**：A 从 M1 引入到 M3 才暴露，中间三次"验证全绿"都不覆盖。缓解：改动中间层布局容器（tabs/collapse/card/scrollbar）后自查高度链与收缩行为；M6 可考虑引入截图级冒烟检查（Playwright）兜住这类回归。
+【C. Element Plus 组件自带外边距与自定义 flex gap 叠加 → 间距异常（本次新增）】
+根因：EP 对相邻按钮自带 `.el-button + .el-button { margin-left: 12px }`；若父容器同时用了 flex `gap`（本例 10px），两者**叠加成 22px**，于是"播放与停止按钮之间"比同一条里其它元素宽出一截。修法：在容器内 `:deep(.el-button + .el-button) { margin-left: 0 }`，让间距只由 gap 一处负责。
+**通用提醒**：给 EP 组件的容器设 `gap` 时，先确认该组件自身有没有相邻兄弟的选择器规则（button/checkbox/radio/tag 一类常有），否则会出现"只有某两个元素间距不对"的诡异现象——所以**任何间距都只允许有一个来源**。
+
+【流程教训】这三类都是**纯视觉**问题：构建不报错、单元测试也覆盖不到。缓解：改动中间层布局容器（tabs/collapse/card/scrollbar）或给 EP 组件容器加 gap 时逐一自查上面对应的判断法；M6 可考虑引入截图级冒烟检查（Playwright）。
 - [2026-09-17 09:31] [经验教训] 空闲停渲染下"面板命令必须自己唤醒循环"：否则状态已改但无帧渲染，表现为"点了没反应" — 「按需/空闲停渲染」架构下的通用陷阱（model-viewer 实测，用户报"动画片段切换后无法再次播放"）：
 
 【现象与根因】动画控制器单测全绿（切换片段后能再次播放、旧片段不参与混合），但用户点播放毫无反应。真因与动画逻辑无关：**引擎的 activity 监听只挂在 canvas 上**（pointerdown/pointermove/wheel/keydown…），而侧栏面板里的点击根本不经过 canvas。渲染循环一旦因空闲停掉，从面板发出的命令只改了状态、**没有任何一帧被渲染**，于是"状态对了但画面不动"。之所以总是出现在"切换片段之后"：切换片段本身就是侧栏点击，之后循环进入空闲。
@@ -273,18 +277,20 @@
 1. 扫描已确认 **ModelInfoPanel 与 DisplayPanel 同样缺少 `flex-shrink: 0` 保护**（两者都是固定高度 flex 列容器且含 `overflow:hidden` 的子元素），存在与光照页相同的潜在裁切风险；已向用户提出，等其确认后再补这一行。
 2. 这两个面板也**尚未**加 `max-height: calc(100vh - 130px)` 这层与祖先无关的兜底。
 3. 若再报"内容缺失/看不到"，先让用户 `Ctrl+F5` 强刷（旧 bundle 会看到修复前状态），再按 lessons 条目的两个判断法定位是 A（高度链）还是 B（flex 收缩）。
-- [2026-09-17 09:40] [行动指南] 界面布局与控件定案：动画控制条悬浮底部（图标按钮并排）、模型信息 HUD 悬浮左上角（快捷键 I）；已移除底部状态栏与动画标签页 — model-viewer 界面布局与控件的用户定案（2026-09，按用户明确要求调整，后续不要改回）：
+- [2026-09-17 09:40] [行动指南] 界面布局与控件定案：动画控制条悬浮底部（图标按钮并排）、信息 HUD 悬浮左上角（快捷键 I）；含"按钮异常"待确认的四个候选方向 — model-viewer 界面布局与控件的用户定案（2026-09，按用户明确要求调整，后续不要改回）：
 
-【动画控制】改为**悬浮在渲染区底部的控制条**（components/viewer/AnimationBar.vue）：片段选择 + 播放·暂停 + 停止 + 时间轴 + 倍速 + 循环模式 + "已播完"标记；**仅在模型含动画时出现**；事件名与原来的侧栏面板完全一致，所以 Viewer.vue 的处理函数无需改动。**原「动画」标签页已删除**（components/panels/AnimationPanel.vue 已删）。
+【动画控制】悬浮在渲染区底部的控制条（components/viewer/AnimationBar.vue）：片段选择 + 播放·暂停 + 停止 + 时间轴 + 倍速 + 循环模式 + "已播完"标记；**仅在模型含动画时出现**；事件名与原侧栏面板一致，所以 Viewer.vue 处理函数无需改动。**原「动画」标签页已删除**（AnimationPanel.vue 已删）。
 
-【播放/停止按钮】用户明确要求**纯图标、两个独立按钮并排**（不再包 button-group、不再用文字）✅ 已实现（commit f8dec99）。约定：
-- 图标用**内联 SVG + `currentColor`**（跟随按钮配色），**不引入 `@element-plus/icons-vue`** —— 本项目一直避免图标依赖包，几个 path 足够；
+【播放/停止按钮】用户要求**纯图标、两个独立按钮并排**（commit f8dec99）：
+- 图标用**内联 SVG + `currentColor`**，**不引入 `@element-plus/icons-vue`**（本项目一直避免图标依赖包）；
 - 图标随状态切换（播放中显示暂停图标），播放态保持主题色高亮；
-- 文字去掉后必须补 `title` 与 `aria-label`，否则可发现性与读屏体验受损；
-- 用户后续可能继续要求把倍速/循环也做成图标或圆形按钮 —— 属于待确认的延伸，不要提前改。
+- 文字去掉后必须补 `title` 与 `aria-label`；
+- 控制条内 `:deep(.el-button + .el-button) { margin-left: 0 }`，间距只由容器 gap 负责（EP 自带 12px 会与 gap 叠加，见 lessons 的 C 家族）。
 
-【模型信息】改为**渲染区左上角的浮动 HUD**（components/viewer/InfoHud.vue），显示：文件名、格式、大小、三角面、顶点、尺寸（按「模型信息」页声明的单位换算，三轴各自带单位）、帧数、FPS、渲染模式（后处理/直渲）、运行环境，以及渲染异常文案；折叠态只保留一个小圆点按钮。**快捷键 I 切换显示/隐藏**（会话级未持久化；HUD 自带折叠/展开按钮，不依赖快捷键可发现）。**原底部状态栏已删除**（components/layout/ViewerStatusBar.vue 已删）。
+【模型信息】渲染区左上角浮动 HUD（components/viewer/InfoHud.vue）：文件名/格式/大小/三角面/顶点/尺寸（按声明单位换算，三轴各自带单位）/帧数/FPS/渲染模式/运行环境 + 渲染异常文案；折叠态只留小圆点按钮。**快捷键 I 切换显示隐藏**（会话级未持久化；HUD 自带折叠按钮）。**原底部状态栏已删除**（ViewerStatusBar.vue 已删）。
 
-【相关约束】① 浮层都放在 `.viewer__stage` 内（`position: absolute` + `z-index: 3`），必须留在 `ModelCanvas` 的兄弟位置而不是插槽内，避免被 canvas/CSS2D 层影响交互；② 快捷键 `I` 的 enabled 恒真（无模型时也能切换 HUD），其余快捷键各自做了空值保护；③ 信息/控制移到浮层后，Viewer.vue 里 formatLabel/sizeText/triangleText/animationTabLabel 等计算属性与 formatBytes/resolveFormatById 导入已随之清理。
+【相关约束】① 浮层都放在 `.viewer__stage` 内（`position:absolute` + `z-index:3`），必须留在 `ModelCanvas` 的兄弟位置而非插槽内，避免被 canvas/CSS2D 层影响交互；② 快捷键 `I` 的 enabled 恒真，其余快捷键各自做空值保护。
 
-【验证手段】这类纯 UI 结构调整**构建不报错、单测覆盖不到**，因此固定用 `node scripts/diagnose-sfc.cjs` 做组件绑定静态检查（本次重构后 14 个组件全部通过）+ 人工在浏览器确认。
+【待用户确认（不要提前改）】用户曾反馈"播放与停止按钮之间异常"，我判断为**间距叠加**并已修（commit 0920a01）；若其实指**图标辨识度**（暂停两条竖线与停止方块在 14px 下易混）／**两按钮宽度或风格不统一**／**播放态 primary 高亮让两者不协调**／**窄窗口折行导致位置异常**，这四个方向都尚未改，等用户一句话点明再动。
+
+【验证手段】这类纯 UI 结构调整**构建不报错、单测覆盖不到**，固定用 `node scripts/diagnose-sfc.cjs` 做组件绑定静态检查（14 个组件）+ 人工在浏览器确认。
