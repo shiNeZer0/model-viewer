@@ -91,7 +91,11 @@ function patch(next, persist = true) {
 
 <style scoped>
 .light-editor {
-  margin-bottom: 8px;
+  /* 卡片必须保持自然高度：一旦被 flex 压缩，el-card 的 overflow:hidden 会静默裁掉表单内容。
+     flex-shrink: 0 与内边距都显式写出，避免以后有人给面板换布局时又把它挤扁。 */
+  flex-shrink: 0;
+  /* 卡片间距交给 .lighting-panel 的 gap，这里不再叠加 margin，避免多出 8px */
+  margin-bottom: 0;
 }
 
 .light-editor :deep(.el-card__header) {

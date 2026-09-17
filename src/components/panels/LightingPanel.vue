@@ -272,6 +272,16 @@ async function onRemoveTheme(row) {
   overflow-y: auto;
 }
 
+/*
+ * 子项一律不参与收缩：面板是固定高度的 flex 列容器，若子项可被压缩，
+ * flex 会把它们挤到低于内容高度；而 el-card / el-alert 自带 overflow:hidden，
+ * 被挤掉的部分会**静默裁切、既看不到也滚不到**（三张光源卡片内容缺失就是这个原因）。
+ * 约定：子项永远保持自然高度，溢出全部交给面板这一个滚动容器。
+ */
+.lighting-panel > * {
+  flex-shrink: 0;
+}
+
 .lighting-panel__alert {
   margin: 0;
 }
