@@ -75,6 +75,12 @@ export async function touchRecentFile({ filePath, fileName, formatId, sizeBytes 
   )
 }
 
+/** 移除单条记录（路径已失效时用户可以从列表里删掉） */
+export async function removeRecentFile(filePath) {
+  const db = await getDb()
+  await db.execute('DELETE FROM recent_files WHERE path = ?', [filePath])
+}
+
 export async function clearRecentFiles() {
   const db = await getDb()
   await db.execute('DELETE FROM recent_files')

@@ -131,6 +131,17 @@ export async function openModelSources(options) {
 }
 
 /**
+ * 桌面端：按历史路径重新打开。
+ * 必须重新走一遍授权 —— asset 协议的 scope 只存在于内存里（进程重启或用户撤销后即失效），
+ * 直接把路径交给 loader 会得到一个"读不到文件"的沉默失败。
+ * Web 端没有路径（历史记录里存的是「文件名::大小」合成键），明确拒绝而不是假装成功。
+ */
+export async function openModelAtPath(filePath, options = {}) {
+  if (!isTauri) throw new Error('REOPEN_UNSUPPORTED: Web 预览')
+  return sourcesFromPaths([filePath], options)
+}
+
+/**
  * 订阅拖放。
  * 桌面端走原生事件（拿到绝对路径），Web 端走 HTML5 drop（拿到 File）。
  * @param {HTMLElement|null} target HTML5 拖放目标（桌面端忽略）

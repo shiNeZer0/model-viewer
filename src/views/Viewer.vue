@@ -14,7 +14,32 @@
         @shading-mode="display.update('shadingMode', $event)"
         @update:auto-rotate="settings.setAutoRotate"
         @settings="router.push('/settings')"
-      />
+      >
+        <template #recent>
+          <!-- 已打开模型时"最近"是主要入口：不能靠空状态页（那里只在没有模型时出现） -->
+          <!-- el-popover 没有 show 事件（只有 before-enter / after-enter 等），刷新挂在 before-enter 上 -->
+          <el-popover
+            v-model:visible="recentMenuOpen"
+            trigger="click"
+            :width="320"
+            placement="bottom-start"
+            @before-enter="recent.refresh()"
+          >
+            <template #reference>
+              <el-button>最近<span class="viewer__caret">▾</span></el-button>
+            </template>
+            <RecentFilesList
+              compact
+              :entries="recent.entries"
+              :can-reopen="recent.canReopen"
+              :limit="8"
+              @open="onOpenRecent"
+              @remove="recent.remove($event)"
+              @clear="recent.clear()"
+            />
+          </el-popover>
+        </template>
+      </ViewerToolbar>
     </el-header>
 
     <el-container class="viewer__body">
@@ -33,7 +58,15 @@
               :percent="model.progressPercent"
               @cancel="cancelLoading"
             />
-            <EmptyDropHint v-else-if="!model.hasModel" @open="openViaDialog" />
+            <EmptyDropHint
+              v-else-if="!model.hasModel"
+              :recent-entries="recent.entries"
+              :can-reopen-recent="recent.canReopen"
+              @open="openViaDialog"
+              @open-recent="onOpenRecent"
+              @remove-recent="recent.remove($event)"
+              @clear-recent="recent.clear()"
+            />
           </ModelCanvas>
 
           <!-- 浮层：信息 HUD（左上，快捷键 I 开关） -->
@@ -96,6 +129,7 @@ import { useRouter } from 'vue-router'
 
 import EmptyDropHint from '../components/layout/EmptyDropHint.vue'
 import LoadingOverlay from '../components/layout/LoadingOverlay.vue'
+import RecentFilesList from '../components/layout/RecentFilesList.vue'
 import ViewerToolbar from '../components/layout/ViewerToolbar.vue'
 import DisplayPanel from '../components/panels/DisplayPanel.vue'
 import LightingPanel from '../components/panels/LightingPanel.vue'
@@ -112,6 +146,7 @@ import { useAnimationStore } from '../stores/animationStore.js'
 import { useDisplayStore } from '../stores/displayStore.js'
 import { useLightingStore } from '../stores/lightingStore.js'
 import { useModelStore } from '../stores/modelStore.js'
+import { useRecentStore } from '../stores/recentStore.js'
 import { useSettingsStore } from '../stores/settingsStore.js'
 import { formatCount } from '../utils/format.js'
 
@@ -121,6 +156,7 @@ const settings = useSettingsStore()
 const display = useDisplayStore()
 const lighting = useLightingStore()
 const animation = useAnimationStore()
+const recent = useRecentStore()
 
 // 引擎是重对象：用 shallowRef 只做引用传递，避免被深度代理
 const engineRef = shallowRef(null)
@@ -133,8 +169,11 @@ const activeTab = ref('info')
 const currentPreset = ref(DEFAULT_VIEW_PRESET)
 /** 信息 HUD 是否显示（会话级：快捷键 I 切换，HUD 自带折叠按钮） */
 const showInfoHud = ref(true)
+/** 「最近」弹层是否展开（点开某个历史文件后要主动收起） */
+const recentMenuOpen = ref(false)
 
-const { openViaDialog, cancelLoading, fitView, registerDropTarget } = useModelOpen(engineRef)
+const { openViaDialog, openRecentPath, cancelLoading, fitView, registerDropTarget } =
+  useModelOpen(engineRef)
 
 let unlistenDrop = () => {}
 
@@ -143,8 +182,21 @@ const treeTabLabel = computed(() =>
   model.hierarchyCount ? `层级 (${formatCount(model.hierarchyCount)})` : '层级',
 )
 
+/* --------------------------- 最近文件（M6-1） --------------------------- */
+
+function onOpenRecent(path) {
+  recentMenuOpen.value = false
+  void openRecentPath(path)
+}
+
 onMounted(async () => {
-  await Promise.all([settings.load(), display.load(), lighting.load(), animation.load()])
+  await Promise.all([
+    settings.load(),
+    display.load(),
+    lighting.load(),
+    animation.load(),
+    recent.load(),
+  ])
   unlistenDrop = await registerDropTarget(stageRef.value)
 })
 
@@ -324,6 +376,12 @@ function onContextLost() {
   position: relative;
   width: 100%;
   height: 100%;
+}
+
+.viewer__caret {
+  margin-left: 4px;
+  font-size: 10px;
+  opacity: 0.7;
 }
 
 .viewer__aside {

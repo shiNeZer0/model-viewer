@@ -32,6 +32,8 @@
       </template>
     </el-dropdown>
 
+    <slot name="recent" />
+
     <div class="viewer-toolbar__spacer" />
 
     <el-tooltip content="转盘模式：视角绕模型自动旋转（快捷键 T）" placement="bottom">

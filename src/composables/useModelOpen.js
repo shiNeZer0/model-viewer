@@ -9,10 +9,17 @@ import { ElMessage } from 'element-plus'
 
 import { LoadCancelledError, createLoadToken, loadModel } from '../core/three/ModelLoader.js'
 import { collectModelStats } from '../core/three/stats.js'
-import { capabilities, describeError, openModelSources, subscribeModelDrop } from '../platform/index.js'
+import {
+  capabilities,
+  describeError,
+  openModelAtPath,
+  openModelSources,
+  subscribeModelDrop,
+} from '../platform/index.js'
 import { touchRecentFile } from '../platform/storage/index.js'
 import { useDisplayStore } from '../stores/displayStore.js'
 import { useModelStore } from '../stores/modelStore.js'
+import { useRecentStore } from '../stores/recentStore.js'
 import { useSettingsStore } from '../stores/settingsStore.js'
 
 /**
@@ -22,6 +29,7 @@ export function useModelOpen(engineRef) {
   const model = useModelStore()
   const settings = useSettingsStore()
   const display = useDisplayStore()
+  const recent = useRecentStore()
 
   let currentToken = null
   /** 当前打开的来源句柄（Web 端持有 blob URL，需要在替换时释放） */
@@ -44,6 +52,8 @@ export function useModelOpen(engineRef) {
         formatId: source.loadFormatId,
         sizeBytes: source.sizeBytes,
       })
+      // 写成功后再刷新列表：新记录立刻出现、被重开的条目移到最前
+      await recent.refresh()
     } catch (error) {
       // 最近文件只是便利功能，写失败不能影响查看模型
       console.warn('[useModelOpen] 写入最近文件失败', error)
@@ -163,10 +173,27 @@ export function useModelOpen(engineRef) {
     }
   }
 
+  /**
+   * 按历史路径重新打开（桌面端）。
+   *
+   * 关键点：**不能复用上次的内存授权** —— asset 协议 scope 只活在当前进程里，
+   * 重开时必须对父目录重新走一遍 allow_asset_paths（openModelAtPath 内部完成）。
+   * 路径已失效（文件被移动/删除/改名）时给出提示，并保留该条记录让用户自行移除。
+   */
+  async function openRecentPath(filePath) {
+    if (!filePath) return
+    try {
+      const handle = await openModelAtPath(filePath, { grantMode: settings.grantMode })
+      await openFromSources(handle)
+    } catch (error) {
+      ElMessage.error(`${describeError(error)}｜该记录可能已失效，可从最近列表中移除`)
+    }
+  }
+
   /** 适配视图：把相机拉到能完整看到模型的距离（M1 会增加标准视图预设） */
   function fitView() {
     engineRef.value?.fitToObject()
   }
 
-  return { openViaDialog, registerDropTarget, cancelLoading, fitView }
+  return { openViaDialog, openRecentPath, registerDropTarget, cancelLoading, fitView }
 }

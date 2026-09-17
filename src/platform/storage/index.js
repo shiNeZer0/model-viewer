@@ -40,6 +40,10 @@ export async function touchRecentFile(entry) {
   return (await loadBackend()).touchRecentFile(entry)
 }
 
+export async function removeRecentFile(filePath) {
+  return (await loadBackend()).removeRecentFile(filePath)
+}
+
 export async function clearRecentFiles() {
   return (await loadBackend()).clearRecentFiles()
 }

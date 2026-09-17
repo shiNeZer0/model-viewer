@@ -81,6 +81,15 @@ export async function touchRecentFile({ filePath, fileName, formatId, sizeBytes 
   writeJson(RECENT_KEY, trimmed)
 }
 
+export async function removeRecentFile(filePath) {
+  const files = readJson(RECENT_KEY, [])
+  const list = Array.isArray(files) ? files : []
+  writeJson(
+    RECENT_KEY,
+    list.filter((item) => item.path !== filePath),
+  )
+}
+
 export async function clearRecentFiles() {
   localStorage.removeItem(RECENT_KEY)
 }
