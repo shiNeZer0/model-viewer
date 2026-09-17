@@ -8,6 +8,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { useViewerEngine } from '../../composables/useViewerEngine.js'
+import { useAnimationStore } from '../../stores/animationStore.js'
 import { useDisplayStore } from '../../stores/displayStore.js'
 import { useLightingStore } from '../../stores/lightingStore.js'
 import { useModelStore } from '../../stores/modelStore.js'
@@ -20,6 +21,7 @@ const settings = useSettingsStore()
 const display = useDisplayStore()
 const model = useModelStore()
 const lighting = useLightingStore()
+const animation = useAnimationStore()
 const { engine, mount, unmount } = useViewerEngine()
 
 /** 引擎消费的设置快照；任何显示设置变化都会让这个 computed 失效 */
@@ -27,11 +29,12 @@ const engineSettings = computed(() => display.toEngineSettings)
 /** 光照快照（三点光源 + 环境贴图） */
 const lightingSettings = computed(() => lighting.toEngineSettings)
 
-/** 把引擎侧的检查数据（层级树 + 包围盒）同步成纯数据交给 store */
+/** 把引擎侧的检查数据（层级树 + 包围盒 + 动画片段）同步成纯数据交给 store */
 function syncInspection() {
   const current = engine.value
   if (!current || !model.hasModel) {
     model.clearInspection()
+    animation.reset()
     return
   }
   const hierarchy = current.getHierarchy()
@@ -40,6 +43,9 @@ function syncInspection() {
     truncated: hierarchy.truncated,
   })
   model.setBounds(current.getModelBounds())
+  // 动画：片段列表 + 运行状态（无动画时面板显示空态）
+  animation.setClips(current.getAnimationClips())
+  animation.applyState(current.getAnimationState())
 }
 
 /** 把显示设置推给引擎，并把引擎的提示（如「模型过大已跳过线框」）回写到 store */
@@ -61,8 +67,13 @@ onMounted(() => {
       onContextLost: () => emit('context-lost'),
       // 渲染异常若不冒到 UI，现象就是「画布全黑但界面正常」，必须显式上报
       onRenderError: (info) => emit('render-error', info),
+      // 动画每帧状态回写（时间轴/播放状态）
+      onAnimationTick: (state) => animation.applyState(state),
     })
     created.setAutoRotate(settings.autoRotate, settings.autoRotateSpeed)
+    // 动画偏好先写进引擎，模型加载时自动套用
+    created.setAnimationSpeed(animation.speed)
+    created.setAnimationLoopMode(animation.loopMode)
     const warnings = created.applyDisplaySettings(engineSettings.value)
     display.setNotes(warnings)
     // 光照在显示设置之后应用：这样"环境贴图当背景"能拿到刚生成好的纹理
@@ -92,6 +103,21 @@ watch(engineSettings, applyDisplaySettings)
 
 // 光照变化 → 引擎（环境贴图只在来源/颜色变化时重新生成）
 watch(lightingSettings, applyLightingSettings)
+
+/*
+ * 动画偏好（倍速/循环）由 store 单向推给引擎：
+ * 这样"用户改设置"与"设置刚从数据库读回来"两条路径都会同步，
+ * 引擎会把偏好记下来，模型加载时自动套用到新的 AnimationController 上。
+ */
+watch(
+  () => [animation.speed, animation.loopMode],
+  ([speed, loopMode]) => {
+    const current = engine.value
+    if (!current) return
+    current.setAnimationSpeed(speed)
+    current.setAnimationLoopMode(loopMode)
+  },
+)
 
 // 模型换了 → 重新抽取层级与包围盒（root 在引擎 setModel 之后才写入 store）
 watch(() => model.root, syncInspection)

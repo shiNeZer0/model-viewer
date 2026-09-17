@@ -20,6 +20,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js'
 
 import { BoundingBoxOverlay } from './boundingBox.js'
+import { AnimationController, MAX_FRAME_DELTA } from './animation.js'
 import { disposeObject3D } from './disposal.js'
 import { EnvironmentManager } from './environment.js'
 import { buildHierarchy } from './hierarchy.js'
@@ -63,6 +64,10 @@ export class ViewerEngine {
     this.hierarchy = { nodes: [], nodeById: new Map(), count: 0, truncated: false }
     /** 边界框标注（M2） */
     this.bbox = null
+    /** 动画控制器（M4）：只有带动画的模型才创建 */
+    this.animation = null
+    /** 上一帧时间戳（用于把帧间隔喂给动画，并夹取上限防空闲唤醒后跳帧） */
+    this.lastFrameTime = 0
     this.lastDisposal = null
     this.lastBox = null
     this.lastPresetId = DEFAULT_VIEW_PRESET
@@ -227,7 +232,18 @@ export class ViewerEngine {
    */
   onFrame() {
     const now = performance.now()
+    // 帧间隔夹取上限：从空闲状态唤醒时 delta 可能很大，直接喂 mixer 会跳帧
+    const delta = this.lastFrameTime
+      ? Math.min((now - this.lastFrameTime) / 1000, MAX_FRAME_DELTA)
+      : 0
+    this.lastFrameTime = now
+
     const controlsChanged = this.controls.update()
+
+    // 动画推进：只有播放中才真正改变姿势；同时把状态回写给 UI
+    const animationState = this.updateAnimation(delta)
+    this.animationPlaying = Boolean(animationState?.playing)
+
     const continuous = hasContinuousWork({
       autoRotate: this.controls.autoRotate,
       animationPlaying: this.animationPlaying,
@@ -238,6 +254,39 @@ export class ViewerEngine {
     this.renderFrame()
     // 继续排帧；若期间进入空闲，下一帧的决策会再次把它停掉
     this.loop.start()
+  }
+
+  /**
+   * 推进动画并（节流地）把状态回写给 UI。
+   * 节流原因：播放中每帧回写会让 Vue 每秒重渲染 60 次时间轴，纯属浪费；
+   * 但"播放/暂停/片段切换/播完"这类离散变化必须立刻回写。
+   */
+  updateAnimation(delta = 0) {
+    if (!this.animation) return null
+    const state = this.animation.update(this.animation.playing ? delta : 0)
+
+    const now = performance.now()
+    const discreteChanged =
+      state.playing !== this.animationState?.playing ||
+      state.finished !== this.animationState?.finished ||
+      state.clipId !== this.animationState?.clipId
+
+    // 100ms ≈ 10Hz，够时间轴平滑又不至于每帧触发 Vue 更新
+    if (discreteChanged || now - (this.lastAnimationTickAt ?? 0) >= 100) {
+      this.lastAnimationTickAt = now
+      this.animationState = state
+      this.onAnimationTick?.(state)
+    }
+    return state
+  }
+
+  /** 用户操作后立即回写一次（不等节流） */
+  emitAnimationState() {
+    const state = this.getAnimationState()
+    this.lastAnimationTickAt = performance.now()
+    this.animationState = state
+    this.onAnimationTick?.(state)
+    return state
   }
 
   /**
@@ -408,13 +457,77 @@ export class ViewerEngine {
     return this.lightingState
   }
 
+  /* ------------------------------- 动画（M4） ------------------------------- */
+
+  /** 片段描述列表（纯数据，供 UI 下拉） */
+  getAnimationClips() {
+    return this.animation?.descriptions ?? []
+  }
+
+  /** 当前动画状态（无动画时返回 hasClips:false 的状态） */
+  getAnimationState() {
+    return (
+      this.animation?.getState() ?? {
+        hasClips: false,
+        clipId: null,
+        clipName: '',
+        playing: false,
+        finished: false,
+        speed: this.animationPrefs?.speed ?? 1,
+        loopMode: this.animationPrefs?.loopMode ?? 'repeat',
+        time: 0,
+        duration: 0,
+        normalized: 0,
+      }
+    )
+  }
+
+  selectAnimationClip(target) {
+    if (!this.animation?.selectClip(target)) return this.getAnimationState()
+    return this.emitAnimationState()
+  }
+
+  playAnimation() {
+    this.animation?.play()
+    return this.emitAnimationState()
+  }
+
+  pauseAnimation() {
+    this.animation?.pause()
+    return this.emitAnimationState()
+  }
+
+  stopAnimation() {
+    this.animation?.stop()
+    return this.emitAnimationState()
+  }
+
+  /** 拖动时间轴；persist 语义由调用方决定（拖动过程不落库） */
+  seekAnimation(normalized) {
+    this.animation?.seekNormalized(normalized)
+    return this.emitAnimationState()
+  }
+
+  /** 倍速：记进偏好，模型切换后会套用到新的控制器上 */
+  setAnimationSpeed(speed) {
+    this.animationPrefs = { ...(this.animationPrefs ?? {}), speed }
+    this.animation?.setSpeed(speed)
+    return this.emitAnimationState()
+  }
+
+  setAnimationLoopMode(loopMode) {
+    this.animationPrefs = { ...(this.animationPrefs ?? {}), loopMode }
+    this.animation?.setLoopMode(loopMode)
+    return this.emitAnimationState()
+  }
+
   /* ------------------------------- 模型与相机 ------------------------------- */
 
   /**
    * 替换当前模型，并释放上一个模型占用的 GPU 资源。
    * @returns {{disposal: object|null, fit: object|null, shadeWarnings: string[]}}
    */
-  setModel(root, { fit = true, presetId } = {}) {
+  setModel(root, { fit = true, presetId, animations = [] } = {}) {
     let disposal = null
     if (this.currentRoot) {
       this.scene.remove(this.currentRoot)
@@ -425,6 +538,11 @@ export class ViewerEngine {
     if (this.shadeController) {
       this.shadeController.dispose()
       this.shadeController = null
+    }
+    // 动画控制器必须先于旧对象树释放，否则 mixer 会继续引用已销毁的节点
+    if (this.animation) {
+      this.animation.dispose()
+      this.animation = null
     }
 
     this.currentRoot = root ?? null
@@ -442,6 +560,19 @@ export class ViewerEngine {
       this.applyVisibilityNow()
       // 层级数据只抽一次：纯数据给 UI，id→对象 映射留在引擎侧（非响应式）
       this.hierarchy = buildHierarchy(this.currentRoot)
+
+      // M4：有动画才创建控制器，默认选中第一段（停在 0 帧）并套用用户偏好
+      const clipList = (Array.isArray(animations) ? animations : []).filter(Boolean)
+      if (clipList.length) {
+        this.animation = new AnimationController(this.currentRoot, clipList)
+        this.animation.selectClip(0)
+        if (this.animationPrefs?.speed !== undefined) {
+          this.animation.setSpeed(this.animationPrefs.speed)
+        }
+        if (this.animationPrefs?.loopMode !== undefined) {
+          this.animation.setLoopMode(this.animationPrefs.loopMode)
+        }
+      }
 
       // 归一化摆放（居中 + 贴地），再按摆放后的包围盒调整网格尺度与相机
       this.lastBox =
@@ -664,6 +795,7 @@ export class ViewerEngine {
     this.postFx.dispose()
     this.stage.dispose()
     this.bbox?.dispose()
+    this.animation?.dispose()
     this.lightingRig?.dispose()
     this.environment?.dispose()
     this.cssRenderer.domElement.remove()

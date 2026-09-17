@@ -182,27 +182,34 @@
 2) **"X is not defined" + "Cannot access 'instance' before initialization" 同时出现时的解读**：前者是根因（引用了未导入的标识符），后者是 Vue 在组件初始化期间走错误处理路径触发的 TDZ 次生报错。**不要被后者的"Vue 内部感"带偏去查框架**，先解决前者；本例两条 TDZ 在修好前者后自然消失。
 
 3) **store 没有单测 = 验证缺口**。modelStore 此前 0 个用例，所以"用了 API 却没 import"这种最基础的问题能一路漏到用户侧（引用未导入标识符只在**调用时**才抛错，构建/eslint 都不一定拦得住）。Pinia setup store 在 Node 下可直接单测（setActivePinia(createPinia())），本轮补齐 7 例后即覆盖状态流转、进度夹取、纯数字快照断言、层级就地补丁与 reset 清理。凡新增 store 一律同步补最小单测集。
-- [2026-09-17 08:35] [经验教训] CSS 百分比高度链静默失效：overflow 不触发导致内容被裁且滚不到（三层修法 + 高度链自查） — CSS 高度链陷阱（model-viewer 实测，用户报"侧边光照栏下方设置无法到达 / 侧边栏未实现滚动"）：
+- [2026-09-17 08:35] [经验教训] CSS 静默裁切两大家族：百分比高度链断裂（overflow 不触发）与 flex 子项被压缩（overflow:hidden 裁掉内容） — CSS 布局「静默裁切」两大家族（model-viewer 实测，用户先后报"侧边光照栏下方设置无法到达"与"三张光源卡片内容缺失"；两者现象都像"内容不够 / 看不到"，但根因不同，修法也不同）：
 
-【根因】给 el-tabs 用了 `display:flex; flex-direction:column` + `.el-tabs__content{flex:1; min-height:0; overflow:hidden}`，但**漏了给 `.el-tab-pane` 确定高度**。面板里的 `height: 100%` 相对于 auto 高度的中间容器会**静默退化为 auto**（不报错、不警告），面板自身的 `overflow-y:auto` 永不触发，超出内容被祖先的 `overflow:hidden` 裁掉且滚不到。四个面板（模型信息/层级/显示/光照）都依赖同一条高度链，全部中招——内容最长的光照页先暴露。
+【A. 百分比高度链断裂 → overflow 根本不触发】
+根因：`.el-tabs__content` 给了 `flex:1; min-height:0` 但**漏了给 `.el-tab-pane` 确定高度**，面板里的 `height:100%` 相对于 auto 高度的中间容器**静默退化为 auto**（不报错、不警告），面板自身的 `overflow-y:auto` 永不触发，超出内容被祖先 `overflow:hidden` 裁掉且滚不到。
+三层修法一起才稳：1) `.el-tab-pane{height:100%}` 补齐链；2) `.el-tabs__content{overflow-y:auto}` 兜底；3) 面板自身再写与祖先无关的确定高度 `max-height: calc(100vh - 130px)`（顶栏52+状态栏30+标签页头约48）——`height:100%` 与 `max-height` 并存：链完整则精确填满，链断裂则被兜住且 overflow 生效。
+判断法：沿 DOM 往上问"这个 overflow:auto 的元素有没有确定高度？高度来自 `height:100%` 还是 flex？"百分比就必须逐层检查；flex item + min-height:0 也算确定高度。
 
-【修法：三层一起才稳】
-1) `.el-tab-pane { height: 100% }` —— 补齐高度链，让面板的 overflow 生效；
-2) `.el-tabs__content { overflow-y: auto }` —— 兜底，链再断时内容区仍能滚；
-3) **面板自身再写一条与祖先无关的确定高度**：`max-height: calc(100vh - 130px)`（顶栏 52 + 状态栏 30 + 标签页头约 48）。`height:100%` 与 `max-height` 并存时：链完整则精确填满，链断裂则被 max-height 兜住且 overflow 生效。
-只做 1 会在任何中间容器再加一层时再次失效；只做 2 会出现嵌套滚动条。判据是"多个独立滚动机制里至少一个能工作"。
+【B. flex 子项被压缩 + overflow:hidden → 内容被裁（本次新增，注意与 A 的区别）】
+根因：`.lighting-panel` 是**固定高度**的 flex 列容器；flex 子项的自动最小高度（`min-height:auto`）**只在 `overflow:visible` 时生效**，而 `el-card`/`el-alert` 自带 `overflow:hidden` → 子项可被压缩到低于内容高度，被挤掉的部分**既看不到也滚不到**。关键鉴别点：这种情况**滚动条其实在工作**（与 A 相反），所以"滚动了仍然看不到内容"要往这里查。
+修法：容器上写 `.panel > * { flex-shrink: 0 }`，约定"子项永远保持自然高度，溢出只由这一个滚动容器负责"；组件自身也显式写 `flex-shrink:0`，防止以后换布局又被挤扁。
 
-【通用判断法】凡"内容够不到 / 滚不动 / 被裁切"的 UI 现象，沿 DOM 往上问两件事：**(a) 这个 overflow:auto 的元素有没有确定高度？(b) 高度来自 `height:100%` 还是 flex？** 百分比就必须检查整条链每层父元素是否都有确定高度（flex item + min-height:0 也算确定高度）；任何一层 auto，百分比都会静默退化。
-
-【流程教训】纯视觉布局问题**无法被单元测试与生产构建发现**。M1 引入 tabs 布局、到 M3 才被用户发现，中间三次"验证全绿"都不覆盖它。缓解：改动中间层布局容器（tabs/collapse/card/scrollbar）后必须自查高度链；M6 可考虑引入截图级冒烟检查（Playwright）兜住这类回归。
+【流程教训】纯视觉布局问题**无法被单元测试与生产构建发现**：A 从 M1 引入到 M3 才暴露，中间三次"验证全绿"都不覆盖。缓解：改动中间层布局容器（tabs/collapse/card/scrollbar）后自查高度链与收缩行为；M6 可考虑引入截图级冒烟检查（Playwright）兜住这类回归。
 
 ## 行动指南 Action Guide
 
-- [2026-09-17 08:46] [行动指南] 侧栏布局定案：单列 + 面板自身滚动（光照页已有 max-height 兜底，另三页待按需补） — model-viewer 侧栏布局的**已定决策**（用户 2026-09 通过选项明确，后续不要再按其他方案改）：
+- [2026-09-17 08:46] [行动指南] 侧栏布局定案（单列 + 面板自滚 + 子项不收缩）与待办：另两个面板尚缺 flex-shrink/兜底保护 — model-viewer 侧栏布局的**已定决策与待办**（用户通过选项明确，后续不要自行扩大或改变方向）：
 
-- 侧栏保持**单列**布局，不加宽、不做两列平铺；面板内容超出时**由面板自身滚动**，不改为全屏抽屉/独立设置页。
-- 已落地：`Viewer.vue` 补 `.el-tab-pane{height:100%}` + `.el-tabs__content{overflow-y:auto}`（commit c3c4227）；`LightingPanel.vue` 加 `height:100% + max-height: calc(100vh - 130px) + overflow-y:auto`（commit 2343ce8）。
+已定决策：
+- 侧栏保持**单列**布局，不加宽、不做两列平铺、不改为全屏抽屉/独立设置页。
+- 内容超出时**由面板自身滚动**（不是页面滚动）。
+- flex 容器约定：**子项不参与收缩**（`.panel > * { flex-shrink: 0 }`），溢出只由面板这一个滚动容器负责。
 
-待办（等用户确认后再做，不要自行扩大改动面）：
-1. 另外三个面板（ModelInfoPanel / DisplayPanel / ModelTreePanel）目前只靠高度链，**尚未**加 `max-height: calc(100vh - 130px)` 这层与祖先无关的兜底；若用户反馈其中某页仍有够不到的控件，按同样两行补上即可。
-2. 若日后又出现"内容缺失/够不到"，先确认用户是否强刷（旧 bundle 会看到修复前的状态），再沿 DOM 往上查高度链（见 lessons 条目的通用判断法）。
+已落地（compose 顺序即修复演进）：
+1. `Viewer.vue`：`.el-tab-pane{height:100%}` + `.el-tabs__content{overflow-y:auto}`（commit c3c4227）；
+2. `LightingPanel.vue`：`height:100% + max-height: calc(100vh - 130px) + overflow-y:auto`（commit 2343ce8）；
+3. `LightingPanel.vue`：`> * { flex-shrink: 0 }` + `LightSourceEditor.vue` 卡片本身 `flex-shrink: 0`（commit 512ced8，修三张光源卡片被压缩导致的静默裁切）。
+
+待办（需用户点头再做，不要擅自扩大改动面）：
+1. 扫描已确认 **ModelInfoPanel 与 DisplayPanel 同样缺少 `flex-shrink: 0` 保护**（两者都是固定高度 flex 列容器且含 `overflow:hidden` 的子元素），存在与光照页相同的潜在裁切风险；已向用户提出，等其确认后再补这一行。
+2. 这两个面板也**尚未**加 `max-height: calc(100vh - 130px)` 这层与祖先无关的兜底。
+3. 若再报"内容缺失/看不到"，先让用户 `Ctrl+F5` 强刷（旧 bundle 会看到修复前状态），再按 lessons 条目的两个判断法定位是 A（高度链）还是 B（flex 收缩）。

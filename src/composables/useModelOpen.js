@@ -81,7 +81,11 @@ export function useModelOpen(engineRef) {
       if (token.cancelled) return
 
       // 上屏（引擎内部会释放上一个模型的 GPU 资源）+ 统计
-      const { disposal, shadeWarnings } = engine.setModel(result.root, { fit: true })
+      const { disposal, shadeWarnings } = engine.setModel(result.root, {
+        fit: true,
+        // 动画片段交给引擎建 AnimationMixer（有动画才会创建控制器）
+        animations: result.animations,
+      })
       const stats = collectModelStats(result.root, { animationCount: result.animations.length })
       model.setReady({ root: result.root, stats })
       // 着色模式相关的提示（如「模型过大已跳过线框」）交给显示面板展示

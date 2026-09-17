@@ -59,6 +59,17 @@
           <el-tab-pane label="显示" name="display">
             <DisplayPanel />
           </el-tab-pane>
+          <el-tab-pane :label="animationTabLabel" name="animation">
+            <AnimationPanel
+              @play="onPlayAnimation"
+              @pause="onPauseAnimation"
+              @stop="onStopAnimation"
+              @seek="onSeekAnimation"
+              @speed="onAnimationSpeed"
+              @loop-mode="onAnimationLoopMode"
+              @select-clip="onSelectAnimationClip"
+            />
+          </el-tab-pane>
           <el-tab-pane label="光照" name="lighting">
             <LightingPanel />
           </el-tab-pane>
@@ -94,6 +105,7 @@ import LoadingOverlay from '../components/layout/LoadingOverlay.vue'
 import ViewerStatusBar from '../components/layout/ViewerStatusBar.vue'
 import ViewerToolbar from '../components/layout/ViewerToolbar.vue'
 import DisplayPanel from '../components/panels/DisplayPanel.vue'
+import AnimationPanel from '../components/panels/AnimationPanel.vue'
 import LightingPanel from '../components/panels/LightingPanel.vue'
 import ModelInfoPanel from '../components/panels/ModelInfoPanel.vue'
 import ModelTreePanel from '../components/panels/ModelTreePanel.vue'
@@ -103,6 +115,7 @@ import { useModelOpen } from '../composables/useModelOpen.js'
 import { resolveFormatById } from '../constants/formats.js'
 import { DEFAULT_VIEW_PRESET, VIEW_PRESETS } from '../core/three/viewPresets.js'
 import { capabilities } from '../platform/index.js'
+import { useAnimationStore } from '../stores/animationStore.js'
 import { useDisplayStore } from '../stores/displayStore.js'
 import { useLightingStore } from '../stores/lightingStore.js'
 import { useModelStore } from '../stores/modelStore.js'
@@ -114,6 +127,7 @@ const model = useModelStore()
 const settings = useSettingsStore()
 const display = useDisplayStore()
 const lighting = useLightingStore()
+const animation = useAnimationStore()
 
 // 引擎是重对象：用 shallowRef 只做引用传递，避免被深度代理
 const engineRef = shallowRef(null)
@@ -136,9 +150,13 @@ const triangleText = computed(() => formatCount(model.stats?.triangleCount ?? 0)
 const treeTabLabel = computed(() =>
   model.hierarchyCount ? `层级 (${formatCount(model.hierarchyCount)})` : '层级',
 )
+/** 动画标签页带片段数；没有动画时只显示"动画" */
+const animationTabLabel = computed(() =>
+  animation.clips.length ? `动画 (${animation.clips.length})` : '动画',
+)
 
 onMounted(async () => {
-  await Promise.all([settings.load(), display.load(), lighting.load()])
+  await Promise.all([settings.load(), display.load(), lighting.load(), animation.load()])
   unlistenDrop = await registerDropTarget(stageRef.value)
 })
 
@@ -193,6 +211,44 @@ function onHideAllNodes() {
 function onResetNodeVisibility() {
   const flags = engineRef.value?.resetNodeVisibility()
   if (flags) model.applyVisibilityFlags(flags)
+}
+
+/* --------------------------- 动画（M4） --------------------------- */
+
+/** 动画操作统一走「引擎执行 → 立即回写 store」，保证 UI 与实际状态一致 */
+function applyAnimationResult(stateOrNull) {
+  if (stateOrNull) animation.applyState(stateOrNull)
+}
+
+function onSelectAnimationClip(clipId) {
+  applyAnimationResult(engineRef.value?.selectAnimationClip(clipId))
+}
+
+function onPlayAnimation() {
+  applyAnimationResult(engineRef.value?.playAnimation())
+}
+
+function onPauseAnimation() {
+  applyAnimationResult(engineRef.value?.pauseAnimation())
+}
+
+function onStopAnimation() {
+  applyAnimationResult(engineRef.value?.stopAnimation())
+}
+
+function onSeekAnimation(normalized, persist = true) {
+  applyAnimationResult(engineRef.value?.seekAnimation(normalized))
+  // 拖动过程不落库：时间位置是临时观察点，不是用户偏好
+  void persist
+}
+
+/** 倍速与循环模式：只改 store，由 ModelCanvas 的 watch 单向推给引擎 */
+function onAnimationSpeed(value, persist = true) {
+  animation.setSpeed(value, { persist })
+}
+
+function onAnimationLoopMode(value) {
+  animation.setLoopMode(value)
 }
 
 /* ------------------------------- 快捷键 ------------------------------- */
