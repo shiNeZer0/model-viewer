@@ -162,10 +162,11 @@
             GLB / GLTF / STL / FBX / OBJ(+MTL) / PLY / 3MF 七种格式；相机控制与 7 个标准视图；
             8 种着色模式；背景（含环境贴图）/网格/坐标轴；边界框与单位换算；层级树与可见性；
             色调映射·曝光·饱和度后处理；三点光源与环境光照预设及自定义光照主题；
-            动画片段选择与播放控制；空闲停渲染；明暗主题
+            动画片段选择与播放控制；空闲停渲染；明暗主题；最近文件与按路径重开；
+            模型轴向覆盖；截图导出（1×/2×/3×）；导入 HDR / EXR 环境贴图；文件关联与单实例
           </el-descriptions-item>
           <el-descriptions-item label="计划中">
-            最近文件、文件关联（双击打开）、截图导出、导入 HDR 环境贴图、应用打包与性能回归
+            应用打包与性能回归（安装包已可产出，十万级三角面的帧率基准待补）
           </el-descriptions-item>
         </el-descriptions>
       </el-card>
@@ -251,6 +252,12 @@ onMounted(async () => {
 <style scoped>
 .settings {
   height: 100vh;
+  /*
+   * 整页滚动：应用外壳（html/body/#app）是 overflow:hidden 的固定视口（3D 视口需要它），
+   * 所以设置页自己充当"整页"滚动容器 —— 头部与所有卡片一起滚，
+   * 而不是让 el-main 内部出现滚动条（用户反馈的"卡片内容有滚动条"）。
+   */
+  overflow-y: auto;
   background-color: var(--el-bg-color-page);
 }
 
@@ -268,13 +275,27 @@ onMounted(async () => {
   font-weight: 600;
 }
 
-.settings__main {
+el-main.settings__main {
   display: flex;
   flex-direction: column;
   gap: 16px;
   max-width: 960px;
   margin: 0 auto;
   width: 100%;
+  /*
+   * el-main 默认是 `flex: 1; overflow: auto`，于是"卡片列表"自己变成一个滚动区
+   * （外层 100vh + 内层滚动 = 嵌套滚动条，且 flex 子项还会被压缩）。
+   * 这里改成 flex: 1 0 auto（吃满剩余高度但不被压缩，内容更高时按内容撑开）+
+   * overflow: visible，把滚动交给外层容器，卡片即按内容自适应高度。
+   * 选择器带上 el-main 是为了稳定压过 Element Plus 的默认样式（不依赖打包顺序）。
+   */
+  flex: 1 0 auto;
+  overflow: visible;
+}
+
+/* 卡片按内容自适应高度：flex 子项默认可收缩，会被压扁导致内容被裁或出现内部滚动条 */
+.settings__card {
+  flex-shrink: 0;
 }
 
 .settings__card-header {
