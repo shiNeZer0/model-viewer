@@ -299,7 +299,17 @@ function onContextLost() {
 .viewer__tabs :deep(.el-tabs__content) {
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  /* 兜底滚动：即使某个面板自身的高度链失效，内容区仍然能滚到最后一行 */
+  overflow-y: auto;
+}
+
+/*
+ * 关键修复：必须给 tab pane 一个确定高度。
+ * 否则面板里的 height:100% 会退化成 auto，面板自身的 overflow-y:auto 永不触发，
+ * 超出的内容会被 .el-tabs__content 裁掉且无法到达（光照页设置够不到就是这个原因）。
+ */
+.viewer__tabs :deep(.el-tab-pane) {
+  height: 100%;
 }
 
 .viewer__footer {

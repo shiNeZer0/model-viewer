@@ -86,6 +86,25 @@
 【UI】ModelTreePanel.vue（第三标签页「层级」，逐节点隐藏开关+聚焦+全部显示/隐藏/重置）；ModelInfoPanel 新增「尺寸与单位」分区（边界框开关、模型单位、显示单位、长宽高、min/max 角坐标）；快捷键 B 切换边界框；modelStore 新增 hierarchy/bounds/selectedNodeId 与**就地补丁**方法（不替换数组，保留 el-tree 展开态；bounds 里的 Box3 用 markRaw 包住避免被深度代理）；ModelCanvas 在 root 变化与设置变化时把引擎数据同步成纯数据。
 
 【验证】vitest 189/189（20 文件）、cargo 24/24、pnpm build 通过。GUI 验收（层级树可见性/聚焦、边界框标注、单位换算显示）需用户在本机 pnpm dev 确认。
+- [2026-09-17 08:23] [工作记录] model-viewer M3 完成：三点光源 + PMREM 环境贴图 + 5 预设 + 自定义光照主题（244 测试全绿） — E:\AI-Coding\model-viewer 的 M3 里程碑（光照与环境）已完成并提交（commit ce2beaa，工作区干净）。
+
+【新增核心模块（均带单测）】
+- src/core/three/lighting.js：三盏平行光（主/补/轮廓）+ 半球环境光；computeLightPosition(方位角/仰角/半径 → 世界坐标，纯函数含越界收敛，约定 0° 指 +Z、仰角从水平面起算)；LIGHT_LIMITS(强度0~10、方位±180、仰角±90、半径0.1~100、环境强度0~5)；normalizeLightingState 固定补齐 key/fill/rim 并按内置预设兜底；主题载荷 createThemePayload/parseThemePayload(schemaVersion=1，拒绝非 JSON/非对象/更高版本)；LightingRig 类（apply 状态→three 光源，dispose 无残留）；describeLightPositions 便于测试。
+- src/core/three/environment.js：createGradientEquirectData 生成等距柱状渐变（Float32Array RGBA、alpha=1、按行做天顶→地平→地面插值；颜色用 three 的 Color 解析以得到线性值）；EnvironmentManager（PMREMGenerator；gradient→fromEquirectangular(DataTexture)、room→fromScene(RoomEnvironment, 0.04)、none→scene.environment=null；scene.environmentIntensity 控强度；内部缓存键避免重复生成 PMREM；applyEquirectangularTexture 作为 HDR 导入接入点）。
+- src/constants/presets/lightingPresets.js：5 个预设（影棚/黄昏/森林/全景/无环境），每个含 lights+environment+background+render；presetToState 深拷贝防止污染常量。
+- src/stores/lightingStore.js：reactive 光照状态 + themes/activeThemeId；updateAmbient/updateLight/updateEnvironment（支持 {persist:false} 供滑杆拖动）；applyPreset 会同时把预设的 background/render 写回 displayStore；saveTheme（同名覆盖）/applyTheme/renameTheme/removeTheme/refreshThemes；load() 从 viewer_settings 读回 lighting.state 与 lighting.activeThemeId。
+
+【引擎/舞台】ViewerEngine 移除 M0 的临时照明（半球+两盏平行光），改由 LightingRig + EnvironmentManager 接管；新增 applyLighting()（幂等，环境贴图仅在来源/颜色变化时重建）；stage.js 的背景新增第 4 种模式 environment（PMREM 贴图作背景 + backgroundIntensity/backgroundBlurriness），并提供 setEnvironmentBackground 由引擎注入纹理。
+
+【持久化】viewer_settings 新增键 lighting.state / lighting.activeThemeId；光照主题走既有 lighting_themes 表（桌面 SQLite / Web localStorage，两侧同名覆盖语义一致），storage 门面新增 list/upsert/rename/delete。
+
+【UI】新增「光照」标签页（LightingPanel.vue + LightSourceEditor.vue）：预设下拉、环境来源(影棚/渐变/无)与三色、环境强度、半球光开关与配色、三盏灯独立编辑器（强度/颜色/方位/仰角/半径，拖动不落库）、主题保存与列表（应用/重命名/删除）。
+
+【测试抓到】① 预设里黄昏/森林的轮廓光方位角写成 190°/200° 超出 ±180°——运行时会被静默夹取不报错，是靠"预设必须落在 LIGHT_LIMITS 内"的断言暴露的；② 仰角上限原设 ±89°，与"平行光在 ±90° 仍有定义"冲突，最终放开到 ±90°。
+
+【范围调整】HDR/EXR 导入移到 M6：需要第二条文件选取链路（平台层要支持非模型扩展名的过滤与授权），且主题引用自定义 HDR 的可复现性需要决策（桌面端复制进应用数据目录 / Web 端 blob 无法跨会话）。接入点 EnvironmentManager.applyEquirectangularTexture 已就绪，文档 §18.4 有记录。
+
+【验证】vitest 244/244（25 文件）、cargo 24/24、pnpm build 通过。GUI 验收（预设切换观感、主题保存/应用、环境贴图当背景）待用户在本机 pnpm dev 确认。
 
 ## 经验教训 Lessons Learned
 
