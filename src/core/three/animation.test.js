@@ -159,6 +159,43 @@ describe('AnimationController', () => {
     expect(state.finished).toBe(false)
   })
 
+  it('停止后仍能再次播放，且停止时回到第 0 帧姿势（用户报障场景）', () => {
+    const { controller, root } = buildController()
+    controller.selectClip(0)
+    controller.play()
+    controller.update(0.6)
+    // 播到一半：x ≈ 6
+    expect(root.position.x).toBeCloseTo(6, 4)
+
+    controller.stop()
+    expect(controller.getState().time).toBe(0)
+    expect(controller.getState().playing).toBe(false)
+    /*
+     * three 的 action.stop() 会停用该 action（_deactivateAction），
+     * 若不再重新激活，姿势既不会回到第 0 帧、后续播放也不会被更新。
+     */
+    expect(root.position.x).toBeCloseTo(0, 5)
+
+    expect(controller.play()).toBe(true)
+    controller.update(0.5)
+    const resumed = controller.getState()
+    expect(resumed.playing).toBe(true)
+    expect(resumed.time).toBeCloseTo(0.5, 4)
+    expect(root.position.x).toBeCloseTo(5, 4)
+  })
+
+  it('停止 → 暂停 → 播放 的组合都保持可播放', () => {
+    const { controller } = buildController()
+    controller.selectClip(0)
+    controller.play()
+    controller.update(0.3)
+    controller.stop()
+    controller.pause()
+    expect(controller.play()).toBe(true)
+    controller.update(0.4)
+    expect(controller.getState().time).toBeCloseTo(0.4, 4)
+  })
+
   it('拖动时间轴：定位到指定进度并暂停，姿势随之更新', () => {
     const { controller, root } = buildController()
     controller.selectClip(0)

@@ -184,6 +184,13 @@ export class AnimationController {
     }
     action.enabled = true
     action.paused = false
+    /*
+     * 必须显式 play()：three 的 `AnimationAction.stop()` 内部会调用
+     * `mixer._deactivateAction()` 把 action 从活动列表移除，此时**只改 paused
+     * 不会让它重新参与更新**——表现就是"停止之后再点播放毫无反应"。
+     * play() 对已激活的 action 是幂等的，可以放心每次都调。
+     */
+    action.play()
     this.playing = true
     return true
   }
@@ -199,7 +206,12 @@ export class AnimationController {
     return this.playing ? this.pause() : this.play()
   }
 
-  /** 停止 = 回到 0 秒并暂停（保持第一帧姿势，不是恢复绑定姿势） */
+  /**
+   * 停止 = 回到 0 秒并暂停（保持第一帧姿势，不是恢复绑定姿势）。
+   *
+   * 同样必须重新 play()：`action.stop()` 会停用该 action，若不重新激活，
+   * 它就不再参与混合，画面会停在上一帧（而不是第 0 帧）。
+   */
   stop() {
     const action = this.currentAction
     if (action) {
@@ -207,6 +219,7 @@ export class AnimationController {
       action.enabled = true
       action.paused = true
       action.time = 0
+      action.play()
     }
     this.playing = false
     this.finished = false

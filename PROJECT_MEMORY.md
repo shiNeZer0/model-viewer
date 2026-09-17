@@ -264,12 +264,18 @@
 1. 扫描已确认 **ModelInfoPanel 与 DisplayPanel 同样缺少 `flex-shrink: 0` 保护**（两者都是固定高度 flex 列容器且含 `overflow:hidden` 的子元素），存在与光照页相同的潜在裁切风险；已向用户提出，等其确认后再补这一行。
 2. 这两个面板也**尚未**加 `max-height: calc(100vh - 130px)` 这层与祖先无关的兜底。
 3. 若再报"内容缺失/看不到"，先让用户 `Ctrl+F5` 强刷（旧 bundle 会看到修复前状态），再按 lessons 条目的两个判断法定位是 A（高度链）还是 B（flex 收缩）。
-- [2026-09-17 09:40] [行动指南] 界面布局定案：动画控制条悬浮于渲染区底部、模型信息 HUD 悬浮于左上角（快捷键 I），底部状态栏与动画标签页已移除 — model-viewer 界面布局的用户定案（2026-09，按用户明确要求调整，后续不要改回）：
+- [2026-09-17 09:40] [行动指南] 界面布局与控件定案：动画控制条悬浮底部（图标按钮并排）、模型信息 HUD 悬浮左上角（快捷键 I）；已移除底部状态栏与动画标签页 — model-viewer 界面布局与控件的用户定案（2026-09，按用户明确要求调整，后续不要改回）：
 
 【动画控制】改为**悬浮在渲染区底部的控制条**（components/viewer/AnimationBar.vue）：片段选择 + 播放·暂停 + 停止 + 时间轴 + 倍速 + 循环模式 + "已播完"标记；**仅在模型含动画时出现**；事件名与原来的侧栏面板完全一致，所以 Viewer.vue 的处理函数无需改动。**原「动画」标签页已删除**（components/panels/AnimationPanel.vue 已删）。
 
-【模型信息】改为**渲染区左上角的浮动 HUD**（components/viewer/InfoHud.vue），显示：文件名、格式、大小、三角面、顶点、尺寸（按「模型信息」页声明的单位换算，三轴各自带单位）、帧数、FPS、渲染模式（后处理/直渲）、运行环境，以及渲染异常文案；折叠态只保留一个小圆点按钮。**快捷键 I 切换显示/隐藏**（会话级，未持久化；HUD 自带折叠/展开按钮，不依赖快捷键可发现）。**原底部状态栏已删除**（components/layout/ViewerStatusBar.vue 已删）。
+【播放/停止按钮】用户明确要求**纯图标、两个独立按钮并排**（不再包 button-group、不再用文字）✅ 已实现（commit f8dec99）。约定：
+- 图标用**内联 SVG + `currentColor`**（跟随按钮配色），**不引入 `@element-plus/icons-vue`** —— 本项目一直避免图标依赖包，几个 path 足够；
+- 图标随状态切换（播放中显示暂停图标），播放态保持主题色高亮；
+- 文字去掉后必须补 `title` 与 `aria-label`，否则可发现性与读屏体验受损；
+- 用户后续可能继续要求把倍速/循环也做成图标或圆形按钮 —— 属于待确认的延伸，不要提前改。
 
-【相关约束】① 浮层都放在 `.viewer__stage` 内（`position: absolute` + `z-index: 3`），因此必须留在 `ModelCanvas` 的兄弟位置而不是插槽内，避免被 canvas/CSS2D 层影响交互；② 快捷键 `I` 的 enabled 改为恒真（无模型时也能切换 HUD），其余快捷键仍各自做了空值保护；③ 由于信息/控制都移到浮层，Viewer.vue 里 formatLabel/sizeText/triangleText/animationTabLabel 等计算属性与 formatBytes/resolveFormatById 导入已随之清理。
+【模型信息】改为**渲染区左上角的浮动 HUD**（components/viewer/InfoHud.vue），显示：文件名、格式、大小、三角面、顶点、尺寸（按「模型信息」页声明的单位换算，三轴各自带单位）、帧数、FPS、渲染模式（后处理/直渲）、运行环境，以及渲染异常文案；折叠态只保留一个小圆点按钮。**快捷键 I 切换显示/隐藏**（会话级未持久化；HUD 自带折叠/展开按钮，不依赖快捷键可发现）。**原底部状态栏已删除**（components/layout/ViewerStatusBar.vue 已删）。
 
-【验证手段】本次是纯 UI 结构调整（构建不报错、单测覆盖不到），因此依赖 `node scripts/diagnose-sfc.cjs` 做组件绑定静态检查 + 人工在浏览器确认。
+【相关约束】① 浮层都放在 `.viewer__stage` 内（`position: absolute` + `z-index: 3`），必须留在 `ModelCanvas` 的兄弟位置而不是插槽内，避免被 canvas/CSS2D 层影响交互；② 快捷键 `I` 的 enabled 恒真（无模型时也能切换 HUD），其余快捷键各自做了空值保护；③ 信息/控制移到浮层后，Viewer.vue 里 formatLabel/sizeText/triangleText/animationTabLabel 等计算属性与 formatBytes/resolveFormatById 导入已随之清理。
+
+【验证手段】这类纯 UI 结构调整**构建不报错、单测覆盖不到**，因此固定用 `node scripts/diagnose-sfc.cjs` 做组件绑定静态检查（本次重构后 14 个组件全部通过）+ 人工在浏览器确认。
