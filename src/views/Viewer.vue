@@ -143,7 +143,7 @@ import { useHotkeys } from '../composables/useHotkeys.js'
 import { useModelOpen } from '../composables/useModelOpen.js'
 import { DEFAULT_SCREENSHOT_SCALE, buildScreenshotFileName } from '../core/screenshot.js'
 import { DEFAULT_VIEW_PRESET, VIEW_PRESETS } from '../core/three/viewPresets.js'
-import { capabilities, saveScreenshot } from '../platform/index.js'
+import { capabilities, saveScreenshot, subscribeOpenRequest, takeStartupModelPath } from '../platform/index.js'
 import { useAnimationStore } from '../stores/animationStore.js'
 import { useDisplayStore } from '../stores/displayStore.js'
 import { useLightingStore } from '../stores/lightingStore.js'
@@ -175,10 +175,12 @@ const showInfoHud = ref(true)
 /** 「最近」弹层是否展开（点开某个历史文件后要主动收起） */
 const recentMenuOpen = ref(false)
 
-const { openViaDialog, openRecentPath, cancelLoading, fitView, registerDropTarget } =
+const { openViaDialog, openPath, cancelLoading, fitView, registerDropTarget } =
   useModelOpen(engineRef)
 
 let unlistenDrop = () => {}
+/** 订阅"第二个实例被拦下后转发过来的打开请求" */
+let unlistenOpenRequest = () => {}
 
 /** 层级标签页带上节点数，方便一眼看出模型复杂度 */
 const treeTabLabel = computed(() =>
@@ -189,7 +191,20 @@ const treeTabLabel = computed(() =>
 
 function onOpenRecent(path) {
   recentMenuOpen.value = false
-  void openRecentPath(path)
+  void openPath(path)
+}
+
+/* --------------------- 关联文件启动 / 单实例（M6-6） --------------------- */
+
+/**
+ * 引擎就绪后再处理"启动时带着文件"：双击关联文件打开时，模型必须在引擎存在之后才能上屏。
+ * 若在 onMounted 里做，engineRef 还是 null，只会得到一句"渲染器尚未就绪"。
+ */
+async function consumeStartupOpen() {
+  const path = await takeStartupModelPath()
+  if (!path) return
+  ElMessage.info(`正在打开：${path}`)
+  await openPath(path, { source: 'startup' })
 }
 
 /* --------------------------- 截图导出（M6-4） --------------------------- */
@@ -234,6 +249,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   unlistenDrop?.()
+  unlistenOpenRequest?.()
 })
 
 /* ------------------------------- 视图操作 ------------------------------- */
@@ -358,6 +374,11 @@ useHotkeys(
 function onEngineReady(engine) {
   engineRef.value = engine
   rendererInfo.value = engine.getRendererInfo()
+  // 关联文件启动与二次打开都依赖引擎已就绪，因此挂在这里而不是 onMounted
+  void consumeStartupOpen()
+  void subscribeOpenRequest((path) => openPath(path, { source: 'startup' })).then((unlisten) => {
+    unlistenOpenRequest = unlisten
+  })
 }
 
 function onFps(value) {

@@ -26,4 +26,6 @@ log = "0.4"
 tauri = { version = "2.10.3", features = ["devtools", "protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-log = "2"
+# 单实例：双击关联文件时 Windows 会再起一个进程，必须把它拦下转交给已运行的窗口
+tauri-plugin-single-instance = "2"
 tauri-plugin-sql = { git = "https://github.com/tuyu79/plugins-workspace.git", branch = "v2-sql-default", package = "tauri-plugin-sql", features = ["sqlite"] }

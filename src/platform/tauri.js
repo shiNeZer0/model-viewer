@@ -6,6 +6,7 @@
  */
 
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { pictureDir, join } from '@tauri-apps/api/path'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { open, save } from '@tauri-apps/plugin-dialog'
@@ -94,4 +95,23 @@ export async function suggestedSavePath(fileName) {
 /** 把 base64 的 PNG 交给 Rust 写盘（前端不碰 fs，写盘约束收在命令里） */
 export function saveScreenshotFile({ path, base64 }) {
   return invoke('save_screenshot', { path, base64 })
+}
+
+/* --------------------- 关联文件启动 / 单实例（M6-6） --------------------- */
+
+/** 首次启动时命令行里带的模型路径（双击关联文件），没有则 null */
+export function startupModelPath() {
+  return invoke('startup_model_path')
+}
+
+/**
+ * 订阅"第二个实例带来的打开请求"。
+ * Rust 侧的单实例插件拦下重复启动后会 emit `open-model-path`，这里转成回调。
+ * @param {(filePath: string) => void} handler
+ * @returns {Promise<Function>} 取消订阅函数
+ */
+export async function subscribeOpenRequest(handler) {
+  return listen('open-model-path', (event) => {
+    if (typeof event.payload === 'string' && event.payload) handler(event.payload)
+  })
 }

@@ -243,3 +243,42 @@ export async function saveScreenshot({ dataUrl, fileName }) {
   const saved = backend.downloadScreenshot({ fileName, dataUrl })
   return { saved: true, path: saved.path, bytes: saved.bytes }
 }
+
+/* --------------------- 关联文件启动 / 单实例（M6-6） --------------------- */
+
+let startupPathConsumed = false
+
+/**
+ * 取「启动时要打开的文件」（桌面端双击关联文件 / 命令行带路径）。
+ *
+ * **只应消费一次**：开发时热更新会重新挂载视图，重复消费会导致反复重新加载模型。
+ * Web 端没有命令行参数，直接返回 null。
+ */
+export async function takeStartupModelPath() {
+  if (!isTauri || startupPathConsumed) return null
+  startupPathConsumed = true
+  try {
+    const backend = await loadTauriBackend()
+    const path = await backend.startupModelPath()
+    return typeof path === 'string' && path ? path : null
+  } catch (error) {
+    console.warn('[platform] 读取启动参数失败', error)
+    return null
+  }
+}
+
+/**
+ * 订阅「第二个实例带来的打开请求」（桌面端）：单实例插件拦下重复启动后由 Rust 转发。
+ * @param {(filePath: string) => void} handler
+ * @returns {Promise<Function>} 取消订阅函数
+ */
+export async function subscribeOpenRequest(handler) {
+  if (!isTauri) return () => {}
+  try {
+    const backend = await loadTauriBackend()
+    return await backend.subscribeOpenRequest(handler)
+  } catch (error) {
+    console.warn('[platform] 订阅打开请求失败', error)
+    return () => {}
+  }
+}

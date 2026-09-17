@@ -180,19 +180,23 @@ export function useModelOpen(engineRef) {
   }
 
   /**
-   * 按历史路径重新打开（桌面端）。
+   * 按路径打开（桌面端）。三种来源共用：最近文件重开、启动时双击关联文件、第二个实例带来的文件。
    *
    * 关键点：**不能复用上次的内存授权** —— asset 协议 scope 只活在当前进程里，
-   * 重开时必须对父目录重新走一遍 allow_asset_paths（openModelAtPath 内部完成）。
-   * 路径已失效（文件被移动/删除/改名）时给出提示，并保留该条记录让用户自行移除。
+   * 按路径打开时必须对父目录重新走一遍 allow_asset_paths（openModelAtPath 内部完成）。
+   * 路径已失效（文件被移动/删除/改名）时给出提示。
+   *
+   * @param {string} filePath
+   * @param {{source?: 'recent'|'startup'}} [options] 仅影响提示措辞
    */
-  async function openRecentPath(filePath) {
+  async function openPath(filePath, { source = 'recent' } = {}) {
     if (!filePath) return
     try {
       const handle = await openModelAtPath(filePath, { grantMode: settings.grantMode })
       await openFromSources(handle)
     } catch (error) {
-      ElMessage.error(`${describeError(error)}｜该记录可能已失效，可从最近列表中移除`)
+      const hint = source === 'recent' ? '｜该记录可能已失效，可从最近列表中移除' : ''
+      ElMessage.error(`${describeError(error)}${hint}`)
     }
   }
 
@@ -201,5 +205,5 @@ export function useModelOpen(engineRef) {
     engineRef.value?.fitToObject()
   }
 
-  return { openViaDialog, openRecentPath, registerDropTarget, cancelLoading, fitView }
+  return { openViaDialog, openPath, registerDropTarget, cancelLoading, fitView }
 }

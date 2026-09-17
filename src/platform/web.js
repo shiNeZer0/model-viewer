@@ -113,6 +113,18 @@ export function downloadScreenshot({ fileName, dataUrl }) {
   return { path: fileName, bytes: bytes.length }
 }
 
+/* --------------------- 关联文件启动 / 单实例（M6-6） --------------------- */
+
+/** 浏览器里没有"命令行启动参数"这回事 */
+export function startupModelPath() {
+  return null
+}
+
+/** 浏览器没有单实例概念（多标签页各自独立），因此没有可订阅的打开请求 */
+export async function subscribeOpenRequest() {
+  return () => {}
+}
+
 /**
  * 订阅 HTML5 拖放（仅 Web 端使用；桌面端由原生事件提供路径）。
  * @param {HTMLElement} target 拖放目标元素

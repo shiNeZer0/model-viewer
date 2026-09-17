@@ -22,7 +22,7 @@ const ERROR_TEMPLATES = {
   LOAD_FAILED: (detail) => `模型解析失败：${detail}`,
   FORMAT_NOT_IMPLEMENTED: (detail) => `该格式的加载器尚未实现：${detail}`,
   REOPEN_UNSUPPORTED: () =>
-    'Web 预览无法按路径重新打开历史文件（浏览器不允许读取未经本次授权的文件），请重新选择文件',
+    'Web 预览无法按路径打开文件（浏览器不允许读取未经本次授权的文件），请重新选择文件',
   SCREENSHOT_NO_DATA: (detail) => `截图失败：渲染器没有返回图像数据${detail ? `（${detail}）` : ''}`,
   SCREENSHOT_INVALID_PATH: (detail) => `保存路径不可用：${detail}`,
   SCREENSHOT_DECODE_FAILED: (detail) => `截图数据无法解析：${detail}`,

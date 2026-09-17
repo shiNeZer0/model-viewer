@@ -33,6 +33,14 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "fileAssociations": [
+      {
+        "ext": ["glb", "gltf", "stl", "fbx", "obj", "ply", "3mf"],
+        "name": "三维模型文件",
+        "description": "三维模型（glTF / FBX / OBJ / STL / PLY / 3MF）",
+        "role": "Viewer"
+      }
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
