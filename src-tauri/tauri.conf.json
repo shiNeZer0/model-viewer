@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "三维模型查看器",
   "version": "0.1.0",
-  "identifier": "com.model-viewer.app",
+  "identifier": "com.shinezer0.modelviewer",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -32,7 +32,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
     "fileAssociations": [
       {
         "ext": ["glb", "gltf", "stl", "fbx", "obj", "ply", "3mf"],

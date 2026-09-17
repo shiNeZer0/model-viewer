@@ -121,14 +121,15 @@ cargo test --manifest-path src-tauri/Cargo.toml   # Rust 单测
 
 ## 计划中（M6 剩余）
 
-> 第 1~6 项已完成（见上）。第 7 项（打包与性能回归）**部分受阻于环境**：
-> release 可执行文件与基准模型脚本已就绪，但安装包在本机打不出来 ——
-> MSI 卡在 WiX 运行时（已排除中文产品名），NSIS 卡在 GitHub release 工具链下载超时。
-> 详见 `docs/设计文档.md` §29；换一台能访问 GitHub 且装了 WiX 运行时的机器即可完成。
+> 第 1~6 项已完成（见上）。第 7 项：**NSIS 安装包已成功产出**
+> （`src-tauri/target/release/bundle/nsis/三维模型查看器_0.1.0_x64-setup.exe`，5.72 MiB），
+> 打包方式按用户决定改为**只打 NSIS**（避开 WiX 的 .NET Framework 3.5 依赖，
+> 且中文产品名在 NSIS 下没有问题）；仍待真机完成的是**帧率基准的数值**
+> 与装包后的"双击打开"验收。详见 `docs/设计文档.md` §29。
 
 | 顺序 | 内容 | 状态 |
 |---|---|---|
-| 7 | 打包与性能回归 | 基准脚本 ✅ / release 构建 ✅ / 安装包与 FPS 数值待真机 |
+| 7 | 打包与性能回归 | NSIS 安装包 ✅ / release 构建 ✅ / 基准脚本 ✅ / FPS 数值与装包验收待真机 |
 
 ## 目录结构
 
