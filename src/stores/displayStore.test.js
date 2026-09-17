@@ -95,6 +95,32 @@ describe('displayStore 快照', () => {
     expect(seen).toEqual([[true, false]])
   })
 
+  it('M2：边界框与单位设置的默认值与更新', async () => {
+    const display = useDisplayStore()
+    expect(display.toEngineSettings.showBoundingBox).toBe(false)
+    expect(display.toEngineSettings.sourceUnit).toBe('raw')
+    expect(display.toEngineSettings.displayUnit).toBe('auto')
+
+    await display.update('showBoundingBox', true, { persist: false })
+    await display.update('sourceUnit', 'mm', { persist: false })
+    await display.update('displayUnit', 'cm', { persist: false })
+    expect(display.toEngineSettings).toMatchObject({
+      showBoundingBox: true,
+      sourceUnit: 'mm',
+      displayUnit: 'cm',
+    })
+  })
+
+  it('M2：非法单位被拒绝，不会污染引擎快照', async () => {
+    const display = useDisplayStore()
+    await display.update('sourceUnit', 'lightyear', { persist: false })
+    expect(display.toEngineSettings.sourceUnit).toBe('raw')
+    await display.update('displayUnit', 'furlong', { persist: false })
+    expect(display.toEngineSettings.displayUnit).toBe('auto')
+    await display.update('sourceUnit', 'in', { persist: false })
+    expect(display.toEngineSettings.sourceUnit).toBe('in')
+  })
+
   it('setNotes 去重并过滤空值', () => {
     const display = useDisplayStore()
     display.setNotes(['a', 'a', '', null, undefined, 'b'])

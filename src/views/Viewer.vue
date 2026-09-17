@@ -43,6 +43,19 @@
           <el-tab-pane label="模型信息" name="info">
             <ModelInfoPanel />
           </el-tab-pane>
+          <el-tab-pane :label="treeTabLabel" name="tree">
+            <ModelTreePanel
+              :nodes="model.hierarchy"
+              :truncated="model.hierarchyTruncated"
+              :selected-id="model.selectedNodeId"
+              @toggle-visibility="onToggleNodeVisibility"
+              @focus="onFocusNode"
+              @select="onSelectNode"
+              @show-all="onShowAllNodes"
+              @hide-all="onHideAllNodes"
+              @reset-visibility="onResetNodeVisibility"
+            />
+          </el-tab-pane>
           <el-tab-pane label="显示" name="display">
             <DisplayPanel />
           </el-tab-pane>
@@ -79,6 +92,7 @@ import ViewerStatusBar from '../components/layout/ViewerStatusBar.vue'
 import ViewerToolbar from '../components/layout/ViewerToolbar.vue'
 import DisplayPanel from '../components/panels/DisplayPanel.vue'
 import ModelInfoPanel from '../components/panels/ModelInfoPanel.vue'
+import ModelTreePanel from '../components/panels/ModelTreePanel.vue'
 import ModelCanvas from '../components/viewer/ModelCanvas.vue'
 import { useHotkeys } from '../composables/useHotkeys.js'
 import { useModelOpen } from '../composables/useModelOpen.js'
@@ -112,6 +126,10 @@ let unlistenDrop = () => {}
 const formatLabel = computed(() => resolveFormatById(model.formatId)?.label ?? '—')
 const sizeText = computed(() => formatBytes(model.sizeBytes))
 const triangleText = computed(() => formatCount(model.stats?.triangleCount ?? 0))
+/** 层级标签页带上节点数，方便一眼看出模型复杂度 */
+const treeTabLabel = computed(() =>
+  model.hierarchyCount ? `层级 (${formatCount(model.hierarchyCount)})` : '层级',
+)
 
 onMounted(async () => {
   await Promise.all([settings.load(), display.load()])
@@ -138,6 +156,39 @@ function onViewPreset(presetId) {
   currentPreset.value = presetId
 }
 
+/* --------------------------- 层级树（M2） --------------------------- */
+
+function onToggleNodeVisibility(nodeId, visible) {
+  if (!engineRef.value?.setNodeVisible(nodeId, visible)) return
+  model.patchNodeVisibility(nodeId, visible)
+}
+
+function onFocusNode(nodeId) {
+  engineRef.value?.focusNode(nodeId)
+  model.setSelectedNode(nodeId)
+  activeTab.value = 'tree'
+}
+
+function onSelectNode(nodeId) {
+  model.setSelectedNode(nodeId)
+}
+
+function onShowAllNodes() {
+  engineRef.value?.setAllNodesVisible(true)
+  model.setAllVisibility(true)
+}
+
+function onHideAllNodes() {
+  engineRef.value?.setAllNodesVisible(false)
+  model.setAllVisibility(false)
+}
+
+/** 清空用户覆盖，回到模型自带的可见性（引擎返回权威结果用于回显） */
+function onResetNodeVisibility() {
+  const flags = engineRef.value?.resetNodeVisibility()
+  if (flags) model.applyVisibilityFlags(flags)
+}
+
 /* ------------------------------- 快捷键 ------------------------------- */
 
 /** 1-7 对应 7 个标准视图（顺序与 VIEW_PRESETS 一致） */
@@ -159,6 +210,7 @@ useHotkeys(
       const next = WIREFRAME_CYCLE[(index + 1) % WIREFRAME_CYCLE.length]
       display.update('shadingMode', next)
     },
+    b: () => display.update('showBoundingBox', !display.showBoundingBox),
   },
   { enabled: () => model.hasModel },
 )

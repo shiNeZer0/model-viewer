@@ -18,6 +18,12 @@ import {
   DEFAULT_GRADIENT_TOP,
   resolveBackgroundMode,
 } from '../core/three/stage.js'
+import {
+  DEFAULT_DISPLAY_UNIT,
+  DEFAULT_SOURCE_UNIT,
+  DISPLAY_UNIT_IDS,
+  resolveUnit,
+} from '../core/three/units.js'
 import { readAllSettings, writeSetting } from '../platform/storage/index.js'
 import { describeError } from '../utils/error-messages.js'
 
@@ -31,6 +37,9 @@ const SETTING_KEYS = {
   showAxes: 'display.showAxes',
   centerModel: 'display.centerModel',
   alignToGround: 'display.alignToGround',
+  showBoundingBox: 'display.showBoundingBox',
+  sourceUnit: 'display.sourceUnit',
+  displayUnit: 'display.displayUnit',
   toneMapping: 'display.toneMapping',
   exposure: 'display.exposure',
   saturation: 'display.saturation',
@@ -56,6 +65,12 @@ export const useDisplayStore = defineStore('display', () => {
   const centerModel = ref(true)
   /** 模型摆放：底部对齐地面（y=0） */
   const alignToGround = ref(true)
+  /** M2：边界框与尺寸标注 */
+  const showBoundingBox = ref(false)
+  /** 模型原始数值的单位（raw = 不换算） */
+  const sourceUnit = ref(DEFAULT_SOURCE_UNIT)
+  /** 尺寸显示单位（auto = 按数值自动挑） */
+  const displayUnit = ref(DEFAULT_DISPLAY_UNIT)
 
   const toneMapping = ref(normalizePostFxSettings().toneMapping)
   const exposure = ref(1)
@@ -80,6 +95,9 @@ export const useDisplayStore = defineStore('display', () => {
     showAxes: showAxes.value,
     centerModel: centerModel.value,
     alignToGround: alignToGround.value,
+    showBoundingBox: showBoundingBox.value,
+    sourceUnit: sourceUnit.value,
+    displayUnit: displayUnit.value,
     toneMapping: toneMapping.value,
     exposure: exposure.value,
     saturation: saturation.value,
@@ -112,6 +130,15 @@ export const useDisplayStore = defineStore('display', () => {
       }
       if (typeof saved[SETTING_KEYS.alignToGround] === 'boolean') {
         alignToGround.value = saved[SETTING_KEYS.alignToGround]
+      }
+      if (typeof saved[SETTING_KEYS.showBoundingBox] === 'boolean') {
+        showBoundingBox.value = saved[SETTING_KEYS.showBoundingBox]
+      }
+      if (resolveUnit(saved[SETTING_KEYS.sourceUnit])) {
+        sourceUnit.value = saved[SETTING_KEYS.sourceUnit]
+      }
+      if (DISPLAY_UNIT_IDS.includes(saved[SETTING_KEYS.displayUnit])) {
+        displayUnit.value = saved[SETTING_KEYS.displayUnit]
       }
 
       const postFx = normalizePostFxSettings({
@@ -184,6 +211,17 @@ export const useDisplayStore = defineStore('display', () => {
       case 'alignToGround':
         alignToGround.value = Boolean(value)
         break
+      case 'showBoundingBox':
+        showBoundingBox.value = Boolean(value)
+        break
+      case 'sourceUnit':
+        if (!resolveUnit(value)) return
+        sourceUnit.value = value
+        break
+      case 'displayUnit':
+        if (!DISPLAY_UNIT_IDS.includes(value)) return
+        displayUnit.value = value
+        break
       case 'toneMapping':
         toneMapping.value = normalizePostFxSettings({ toneMapping: value }).toneMapping
         break
@@ -220,6 +258,9 @@ export const useDisplayStore = defineStore('display', () => {
     showAxes.value = true
     centerModel.value = true
     alignToGround.value = true
+    showBoundingBox.value = false
+    sourceUnit.value = DEFAULT_SOURCE_UNIT
+    displayUnit.value = DEFAULT_DISPLAY_UNIT
     toneMapping.value = normalizePostFxSettings().toneMapping
     exposure.value = 1
     saturation.value = DEFAULT_SATURATION
@@ -238,6 +279,9 @@ export const useDisplayStore = defineStore('display', () => {
     showAxes,
     centerModel,
     alignToGround,
+    showBoundingBox,
+    sourceUnit,
+    displayUnit,
     toneMapping,
     exposure,
     saturation,

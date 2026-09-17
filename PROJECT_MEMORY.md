@@ -56,6 +56,19 @@
 【测试暴露的真实缺陷】computeViewDistance 在 fovDeg 缺省/NaN 时算出 NaN 相机坐标（undefined*Math.PI）；M0 调用点总传 camera.fov 所以没暴露，抽成模块后立刻被单测抓到。已加 0<fov<180 校验与回退 50°，并补回归用例。
 
 【验证】pnpm test 107/107（12 文件）、pnpm build 成功、cargo test 24/24。GUI 级验收（8 种着色切换与还原、6 视图方向、背景、饱和度曝光、静止 5 秒后 CPU 归零）需用户在本机 pnpm tauri dev 确认。
+- [2026-09-17 07:59] [工作记录] model-viewer 模型摆放归一化：居中世界原点 + 底部贴地（可重复应用不漂移） — E:\AI-Coding\model-viewer 新增「模型摆放归一化」（commit 4af4d86）：加载模型后计算包围盒，把模型居中到世界原点（X/Z）、底部贴到地面（y=0），网格/坐标轴随之落在模型底部，相机按摆放后的包围盒适配。
+
+【新增 src/core/three/modelPlacement.js】
+- `computePlacementOffset(box, {center, ground})` 纯函数，四种组合：居中+贴地=(-cx,-min.y,-cz)；居中不贴地=(-cx,-cy,-cz)；仅贴地=(0,-min.y,0)；都不开=(0,0,0)；空 box 返回零向量。
+- `ModelPlacement` 类：构造时记住 `originalPosition`（克隆）；apply() 每次都**先还原到原始变换再测量**，然后一次性把世界空间偏移加到 object.position 上（前提：对象挂在场景根，父变换为单位矩阵）。这是"可重复应用不漂移"的关键——绝不在当前位置上累加增量。提供 isPristine / restore()。
+
+【引擎接线】setModel 顺序：scene.add → new ModelPlacement → ShadeController.apply → placement.apply({center,ground}) → stage.fitToBox(摆放后 box) → fitToObject(root, {box})。fitToObject 新增可选的 box 参数避免重复计算。applyDisplaySettings 会比较前后 centerModel/alignToGround，变化时调用 reapplyPlacement()（重新摆放 + 刷新网格 + 重新适配相机）。新增 getModelBounds() 返回 {box,size,center,min,max} 供 M2 尺寸面板/边界框标注复用。
+
+【设置与 UI】displayStore 新增 display.centerModel / display.alignToGround（默认 true、持久化）；DisplayPanel 新增「模型放置」分区两个开关，并明确提示"只影响显示、不改模型文件原始坐标，关掉即可看真实坐标"。
+
+【测试】modelPlacement.test.js 13 例（四种偏移组合、幂等不漂移、开关还原、自带旋转缩放仍正确、空对象）+ displayStore 2 例；vitest 144/144、cargo 未动、双端构建通过。
+
+【注意】摆放是场景空间平移，若用户需要查看模型文件里的真实坐标，关掉开关即可（已做成一键还原）。
 
 ## 经验教训 Lessons Learned
 

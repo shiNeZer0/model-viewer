@@ -1,9 +1,10 @@
 /**
  * 着色模式策略层。
  *
- * 核心约束：**只换材质引用，绝不修改几何体**。这样：
- * - 模式切换是常数级开销（不需要重建 BufferGeometry）；
- * - 切回「实体」时能 100% 还原原始材质（模型自带贴图/透明/双面等设置都保留）。
+ * 核心约束：**只换材质引用与叠加层，绝不修改几何，也不修改可见性**。
+ * - 只换材质 → 模式切换是常数级开销，切回「实体」能 100% 还原原始材质与贴图；
+ * - 不碰 visible → 可见性统一由 `visibility.js` 按「用户开关 + 模型原始值 + 仅线框」解析，
+ *   否则「仅线框」切回实体时会把用户手动隐藏的网格一起显示出来。
  *
  * 线框相关模式有两道保护：超过 fullLimit 时退化为「只画结构边」，
  * 超过 hardLimit 时直接跳过并给出提示——否则百万面模型一开线框就会卡死。
@@ -123,8 +124,6 @@ export class ShadeController {
 
     /** mesh -> 原始材质 */
     this.originalMaterials = new Map()
-    /** mesh -> 原始可见性（模型可能自带隐藏节点，切模式时不能把它们显示出来） */
-    this.originalVisibility = new Map()
     /** 随模式切换创建/销毁的材质（flat 的克隆） */
     this.transientMaterials = new Set()
     /** 整个控制器生命周期内复用的材质（黏土/法线/顶点色/UV/线框） */
@@ -141,7 +140,6 @@ export class ShadeController {
     this.root?.traverse((node) => {
       if (!node.isMesh) return
       if (!this.originalMaterials.has(node)) this.originalMaterials.set(node, node.material)
-      if (!this.originalVisibility.has(node)) this.originalVisibility.set(node, node.visible)
     })
   }
 
@@ -157,11 +155,8 @@ export class ShadeController {
     this.clearOverlays()
     this.restoreMaterials()
 
-    if (hidesSolid(mode.id)) {
-      this.setSolidVisible(false)
-    } else {
-      this.setSolidVisible(true)
-
+    // 「仅线框」只画线、不做材质替换（实体是否隐藏由 visibility 层统一解析）
+    if (!hidesSolid(mode.id)) {
       if (mode.id === 'clay') {
         this.overrideAll(() => this.getClayMaterial())
       } else if (mode.id === 'flat') {
@@ -202,12 +197,6 @@ export class ShadeController {
       material.dispose()
     }
     this.transientMaterials.clear()
-  }
-
-  setSolidVisible(visible) {
-    for (const mesh of this.originalMaterials.keys()) {
-      mesh.visible = visible && (this.originalVisibility.get(mesh) ?? true)
-    }
   }
 
   overrideAll(factory) {

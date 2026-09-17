@@ -128,22 +128,30 @@ describe('ShadeController', () => {
     controller2.dispose()
   })
 
-  it('线框叠加：生成 LineSegments 并挂在父节点上；仅线框模式隐藏实体', () => {
+  it('线框叠加：生成 LineSegments 并挂在父节点上（可见性不归它管）', () => {
     const { root, mesh } = buildMesh()
     const controller = new ShadeController(root)
 
     controller.apply('shadedWire')
-    expect(mesh.visible).toBe(true)
     expect(root.children.filter((child) => child.isLineSegments)).toHaveLength(1)
 
     controller.apply('wire')
-    expect(mesh.visible).toBe(false)
-    // 线框挂在父节点（root）上，因此隐藏 mesh 不会连带隐藏线框
+    // 线框挂在父节点（root）上，因此「仅线框」隐藏 mesh 不会连带隐藏线框
     expect(root.children.filter((child) => child.isLineSegments)).toHaveLength(1)
 
     controller.apply('shaded')
-    expect(mesh.visible).toBe(true)
     expect(root.children.filter((child) => child.isLineSegments)).toHaveLength(0)
+    controller.dispose()
+  })
+
+  it('绝不修改节点可见性（交给 visibility.js 统一解析，避免与用户开关打架）', () => {
+    const { root, mesh } = buildMesh()
+    const controller = new ShadeController(root)
+
+    for (const mode of ['shadedWire', 'wire', 'clay', 'flat', 'shaded']) {
+      controller.apply(mode)
+      expect(mesh.visible).toBe(true)
+    }
     controller.dispose()
   })
 
@@ -172,19 +180,15 @@ describe('ShadeController', () => {
     hardController.dispose()
   })
 
-  it('模型自带隐藏节点在切换模式后仍保持隐藏', () => {
+  it('模型自带隐藏节点不会被模式切换"点亮"（控制器不动 visible）', () => {
     const { root, mesh } = buildMesh()
     mesh.visible = false
     const controller = new ShadeController(root)
 
-    controller.apply('clay')
-    expect(mesh.visible).toBe(false)
-
-    controller.apply('wire')
-    expect(mesh.visible).toBe(false)
-
-    controller.apply('shaded')
-    expect(mesh.visible).toBe(false)
+    for (const mode of ['clay', 'wire', 'shaded']) {
+      controller.apply(mode)
+      expect(mesh.visible).toBe(false)
+    }
     controller.dispose()
   })
 

@@ -6,7 +6,7 @@
  */
 
 import { defineStore } from 'pinia'
-import { computed, ref, shallowRef } from 'vue'
+import { computed, markRaw, ref, shallowRef } from 'vue'
 
 const STATUS = {
   empty: 'empty',
@@ -30,6 +30,14 @@ export const useModelStore = defineStore('model', () => {
   const missingResources = ref([])
   const progress = ref({ loaded: 0, total: 0 })
   const stats = ref(null)
+
+  /* ------------------------- M2：层级树与包围盒 ------------------------- */
+  /** 层级数据（纯数据树，直接给 el-tree） */
+  const hierarchy = ref([])
+  const hierarchyCount = ref(0)
+  const hierarchyTruncated = ref(false)
+  const bounds = ref(null)
+  const selectedNodeId = ref('')
 
   const root = shallowRef(null)
 
@@ -84,6 +92,72 @@ export const useModelStore = defineStore('model', () => {
     progress.value = { loaded: 0, total: 0 }
   }
 
+  /* ------------------------- M2：层级与包围盒 ------------------------- */
+
+  function setHierarchy(nodes, { count = 0, truncated = false } = {}) {
+    hierarchy.value = Array.isArray(nodes) ? nodes : []
+    hierarchyCount.value = count
+    hierarchyTruncated.value = truncated
+  }
+
+  function setBounds(nextBounds) {
+    // 包围盒里是 three 的 Box3/Vector3：整块标记为 raw，避免被 Vue 深度代理
+    bounds.value = nextBounds ? markRaw(nextBounds) : null
+  }
+
+  function setSelectedNode(nodeId) {
+    selectedNodeId.value = nodeId ?? ''
+  }
+
+  /**
+   * 就地更新某个节点的可见性（不替换数组，避免 el-tree 丢失展开状态）。
+   * 权威状态在引擎侧，这里只做 UI 回显。
+   */
+  function patchNodeVisibility(nodeId, visible) {
+    const walk = (nodes) => {
+      for (const node of nodes) {
+        if (node.id === nodeId) {
+          node.visible = visible
+          return true
+        }
+        if (walk(node.children ?? [])) return true
+      }
+      return false
+    }
+    return walk(hierarchy.value)
+  }
+
+  /** 批量设置可见性回显（全部显示/隐藏） */
+  function setAllVisibility(visible) {
+    const walk = (nodes) => {
+      for (const node of nodes) {
+        node.visible = visible
+        walk(node.children ?? [])
+      }
+    }
+    walk(hierarchy.value)
+  }
+
+  /** 用引擎返回的权威可见性回填（重置覆盖后） */
+  function applyVisibilityFlags(flags) {
+    if (!flags?.get) return
+    const walk = (nodes) => {
+      for (const node of nodes) {
+        node.visible = flags.get(node.id) ?? node.visible
+        walk(node.children ?? [])
+      }
+    }
+    walk(hierarchy.value)
+  }
+
+  function clearInspection() {
+    hierarchy.value = []
+    hierarchyCount.value = 0
+    hierarchyTruncated.value = false
+    bounds.value = null
+    selectedNodeId.value = ''
+  }
+
   /** 取消或清空当前模型（保留统计清零，避免面板显示上一个模型的数据） */
   function reset() {
     filePath.value = ''
@@ -97,6 +171,7 @@ export const useModelStore = defineStore('model', () => {
     progress.value = { loaded: 0, total: 0 }
     stats.value = null
     root.value = null
+    clearInspection()
   }
 
   return {
@@ -111,6 +186,11 @@ export const useModelStore = defineStore('model', () => {
     missingResources,
     progress,
     stats,
+    hierarchy,
+    hierarchyCount,
+    hierarchyTruncated,
+    bounds,
+    selectedNodeId,
     root,
     isReady,
     isLoading,
@@ -123,6 +203,13 @@ export const useModelStore = defineStore('model', () => {
     addMissingResource,
     setReady,
     setError,
+    setHierarchy,
+    setBounds,
+    setSelectedNode,
+    patchNodeVisibility,
+    setAllVisibility,
+    applyVisibilityFlags,
+    clearInspection,
     reset,
   }
 })

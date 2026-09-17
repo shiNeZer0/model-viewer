@@ -9,6 +9,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { useViewerEngine } from '../../composables/useViewerEngine.js'
 import { useDisplayStore } from '../../stores/displayStore.js'
+import { useModelStore } from '../../stores/modelStore.js'
 import { useSettingsStore } from '../../stores/settingsStore.js'
 
 const emit = defineEmits(['ready', 'context-lost', 'fps', 'render-error'])
@@ -16,10 +17,26 @@ const emit = defineEmits(['ready', 'context-lost', 'fps', 'render-error'])
 const containerRef = ref(null)
 const settings = useSettingsStore()
 const display = useDisplayStore()
+const model = useModelStore()
 const { engine, mount, unmount } = useViewerEngine()
 
 /** 引擎消费的设置快照；任何显示设置变化都会让这个 computed 失效 */
 const engineSettings = computed(() => display.toEngineSettings)
+
+/** 把引擎侧的检查数据（层级树 + 包围盒）同步成纯数据交给 store */
+function syncInspection() {
+  const current = engine.value
+  if (!current || !model.hasModel) {
+    model.clearInspection()
+    return
+  }
+  const hierarchy = current.getHierarchy()
+  model.setHierarchy(hierarchy.nodes, {
+    count: hierarchy.count,
+    truncated: hierarchy.truncated,
+  })
+  model.setBounds(current.getModelBounds())
+}
 
 /** 把显示设置推给引擎，并把引擎的提示（如「模型过大已跳过线框」）回写到 store */
 function applyDisplaySettings() {
@@ -27,6 +44,8 @@ function applyDisplaySettings() {
   if (!current) return
   const warnings = current.applyDisplaySettings(engineSettings.value)
   display.setNotes(warnings)
+  // 单位/摆放变化会影响包围盒数值，顺手刷新
+  model.setBounds(current.getModelBounds())
 }
 
 onMounted(() => {
@@ -42,6 +61,7 @@ onMounted(() => {
     created.setAutoRotate(settings.autoRotate, settings.autoRotateSpeed)
     const warnings = created.applyDisplaySettings(engineSettings.value)
     display.setNotes(warnings)
+    model.setBounds(created.getModelBounds())
     emit('ready', created)
   } catch (error) {
     // 引擎构造失败（例如 WebGL 不可用）同样不能让用户只看到一块黑画布
@@ -58,6 +78,12 @@ onBeforeUnmount(() => unmount())
 
 // 显示设置变化 → 引擎
 watch(engineSettings, applyDisplaySettings)
+
+// 模型换了 → 重新抽取层级与包围盒（root 在引擎 setModel 之后才写入 store）
+watch(() => model.root, syncInspection)
+
+// 模型换了 → 重新抽取层级与包围盒（root 在引擎 setModel 之后才写入 store）
+watch(() => model.root, syncInspection)
 
 watch(
   () => [settings.autoRotate, settings.autoRotateSpeed],

@@ -19,12 +19,14 @@ import {
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js'
 
+import { BoundingBoxOverlay } from './boundingBox.js'
 import { disposeObject3D } from './disposal.js'
+import { buildHierarchy } from './hierarchy.js'
 import { DEFAULT_IDLE_MS, createIdlePolicy, hasContinuousWork } from './idlePolicy.js'
 import { ModelPlacement } from './modelPlacement.js'
 import { PostFx, normalizePostFxSettings } from './postfx.js'
 import { createRenderLoop } from './renderLoop.js'
-import { DEFAULT_SHADE_MODE, ShadeController } from './shadeModes.js'
+import { DEFAULT_SHADE_MODE, ShadeController, hidesSolid } from './shadeModes.js'
 import {
   DEFAULT_BACKGROUND_COLOR,
   DEFAULT_BACKGROUND_MODE,
@@ -32,7 +34,9 @@ import {
   DEFAULT_GRADIENT_TOP,
   Stage,
 } from './stage.js'
+import { DEFAULT_DISPLAY_UNIT, DEFAULT_SOURCE_UNIT } from './units.js'
 import { DEFAULT_VIEW_PRESET, computeCameraPlacement } from './viewPresets.js'
+import { applyVisibility, captureVisibility } from './visibility.js'
 
 const FPS_SAMPLE_INTERVAL_MS = 500
 
@@ -49,6 +53,14 @@ export class ViewerEngine {
     this.shadeController = null
     /** 当前模型的摆放控制器（居中/贴地），随模型切换而重建 */
     this.placement = null
+    /** 用户通过层级树手动设置的可见性（覆盖模型原始值） */
+    this.visibilityOverrides = new Map()
+    /** 模型自带的原始可见性 */
+    this.originalVisibility = new Map()
+    /** 层级数据（纯数据树 + id→对象 映射，映射不进响应式） */
+    this.hierarchy = { nodes: [], nodeById: new Map(), count: 0, truncated: false }
+    /** 边界框标注（M2） */
+    this.bbox = null
     this.lastDisposal = null
     this.lastBox = null
     this.lastPresetId = DEFAULT_VIEW_PRESET
@@ -76,6 +88,10 @@ export class ViewerEngine {
       // 模型摆放：默认居中到世界原点并把底部贴到地面
       centerModel: options.centerModel ?? true,
       alignToGround: options.alignToGround ?? true,
+      // M2：边界框标注与单位
+      showBoundingBox: options.showBoundingBox ?? false,
+      sourceUnit: options.sourceUnit ?? DEFAULT_SOURCE_UNIT,
+      displayUnit: options.displayUnit ?? DEFAULT_DISPLAY_UNIT,
       toneMapping: postFxSettings.toneMapping,
       exposure: postFxSettings.exposure,
       saturation: postFxSettings.saturation,
@@ -142,6 +158,9 @@ export class ViewerEngine {
       gradientBottom: this.display.gradientBottom,
     })
     this.stage.setHelpers({ showGrid: this.display.showGrid, showAxes: this.display.showAxes })
+
+    // M2：边界框与尺寸标注（CSS2D 标签复用引擎里的 CSS2D 渲染层）
+    this.bbox = new BoundingBoxOverlay(this.scene)
 
     this.idle = createIdlePolicy({ idleMs: this.display.idleMs })
 
@@ -325,6 +344,8 @@ export class ViewerEngine {
 
     if (this.shadeController && this.display.shadingMode !== this.shadeController.currentMode) {
       warnings.push(...this.shadeController.apply(this.display.shadingMode))
+      // 模式变化会影响"实体是否该隐藏"，可见性统一重算
+      this.applyVisibilityNow()
     }
 
     // 摆放设置变化 → 重新归一化（网格与相机一并刷新）
@@ -334,6 +355,15 @@ export class ViewerEngine {
         this.display.alignToGround !== previous.alignToGround)
     ) {
       this.reapplyPlacement()
+    }
+
+    // 边界框开关 / 单位变化 → 重画标注（尺寸文本随单位换算）
+    if (
+      this.display.showBoundingBox !== previous.showBoundingBox ||
+      this.display.sourceUnit !== previous.sourceUnit ||
+      this.display.displayUnit !== previous.displayUnit
+    ) {
+      this.refreshBoundsOverlay()
     }
 
     this.stage.setBackground({
@@ -383,7 +413,13 @@ export class ViewerEngine {
       this.scene.add(this.currentRoot)
       this.placement = new ModelPlacement(this.currentRoot)
       this.shadeController = new ShadeController(this.currentRoot)
+      this.originalVisibility = captureVisibility(this.currentRoot)
+      this.visibilityOverrides = new Map()
+
       shadeWarnings = this.shadeController.apply(this.display.shadingMode)
+      this.applyVisibilityNow()
+      // 层级数据只抽一次：纯数据给 UI，id→对象 映射留在引擎侧（非响应式）
+      this.hierarchy = buildHierarchy(this.currentRoot)
 
       // 归一化摆放（居中 + 贴地），再按摆放后的包围盒调整网格尺度与相机
       this.lastBox =
@@ -392,10 +428,15 @@ export class ViewerEngine {
           ground: this.display.alignToGround,
         }) ?? new Box3().setFromObject(this.currentRoot)
       this.stage.fitToBox(this.lastBox)
+      this.refreshBoundsOverlay()
       if (fit) fitResult = this.fitToObject(this.currentRoot, { presetId, box: this.lastBox })
     } else {
       this.lastBox = null
       this.placement = null
+      this.hierarchy = { nodes: [], nodeById: new Map(), count: 0, truncated: false }
+      this.visibilityOverrides = new Map()
+      this.originalVisibility = new Map()
+      this.bbox?.update(null)
     }
 
     this.noteActivity()
@@ -462,8 +503,85 @@ export class ViewerEngine {
 
     this.lastBox = box
     this.stage.fitToBox(box)
+    this.refreshBoundsOverlay()
     this.fitToObject(this.currentRoot, { presetId: this.lastPresetId, box })
     return box
+  }
+
+  /* --------------------------- 可见性 / 层级 / 边界框 --------------------------- */
+
+  /** 按「用户开关 + 模型原始值 + 当前模式是否隐藏实体」重算所有节点可见性 */
+  applyVisibilityNow() {
+    if (!this.currentRoot) return 0
+    const changed = applyVisibility(this.currentRoot, {
+      overrides: this.visibilityOverrides,
+      originals: this.originalVisibility,
+      hideSolids: hidesSolid(this.display.shadingMode),
+    })
+    if (changed) this.noteActivity()
+    return changed
+  }
+
+  /** 重画边界框：开关与单位都从这里生效 */
+  refreshBoundsOverlay() {
+    if (!this.bbox) return
+    this.bbox.setUnits({
+      sourceUnit: this.display.sourceUnit,
+      displayUnit: this.display.displayUnit,
+    })
+    this.bbox.setVisible(this.display.showBoundingBox)
+    this.bbox.update(this.display.showBoundingBox ? this.lastBox : null)
+  }
+
+  /** 层级数据（纯数据，供 UI 渲染 el-tree） */
+  getHierarchy() {
+    return {
+      nodes: this.hierarchy.nodes,
+      count: this.hierarchy.count,
+      truncated: this.hierarchy.truncated,
+    }
+  }
+
+  /** 手动显示/隐藏某个节点（记入 overrides，不会被模式切换覆盖） */
+  setNodeVisible(nodeId, visible) {
+    const node = this.hierarchy.nodeById.get(nodeId)
+    if (!node) return false
+    this.visibilityOverrides.set(node, Boolean(visible))
+    this.applyVisibilityNow()
+    return true
+  }
+
+  /** 批量显示/隐藏（层级树工具栏） */
+  setAllNodesVisible(visible) {
+    for (const node of this.hierarchy.nodeById.values()) {
+      this.visibilityOverrides.set(node, Boolean(visible))
+    }
+    this.applyVisibilityNow()
+  }
+
+  /** 清空用户覆盖，回到模型自带的可见性；返回各节点的权威可见性供 UI 回显 */
+  resetNodeVisibility() {
+    this.visibilityOverrides.clear()
+    this.applyVisibilityNow()
+    return this.collectVisibilityFlags()
+  }
+
+  /** 当前每个节点的真实可见性（id → boolean），用于回填层级树 */
+  collectVisibilityFlags() {
+    const flags = new Map()
+    for (const [id, node] of this.hierarchy.nodeById) {
+      flags.set(id, node.visible !== false)
+    }
+    return flags
+  }
+
+  /** 聚焦某个节点：把相机对准它的包围盒中心（层级树双击/按钮） */
+  focusNode(nodeId) {
+    const node = this.hierarchy.nodeById.get(nodeId)
+    if (!node) return null
+    const box = new Box3().setFromObject(node)
+    if (box.isEmpty()) return null
+    return this.fitToObject(node, { box, presetId: this.lastPresetId })
   }
 
   /** 当前模型摆放后的包围盒（尺寸面板 / 边界框标注使用） */
@@ -523,6 +641,7 @@ export class ViewerEngine {
 
     this.postFx.dispose()
     this.stage.dispose()
+    this.bbox?.dispose()
     this.cssRenderer.domElement.remove()
     this.renderer.dispose()
     this.canvas.remove()
