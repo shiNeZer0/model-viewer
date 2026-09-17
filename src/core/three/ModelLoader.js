@@ -15,7 +15,7 @@ import { rawErrorMessage } from '../../utils/error-messages.js'
 import { disposeObject3D } from './disposal.js'
 import { EXTRA_FORMAT_LOADERS } from './formatLoaders.js'
 import { createDefaultMaterial } from './materialNormalizer.js'
-import { resolveAssetUrl } from './url-rewrite.js'
+import { normalizeReferenceUrl } from './formatLoaders.js'
 
 /**
  * 解码器目录必须是**绝对 URL**：DRACOLoader / KTX2Loader 会在 blob URL 的 worker 里
@@ -48,7 +48,15 @@ export function createLoadToken() {
   }
 }
 
-export function createLoadingManager({ onProgress, onResourceError, assetMap } = {}) {
+/**
+ * 建立本次加载共用的 LoadingManager。
+ *
+ * URL 修饰器统一装在这里（各 loader 不再各自安装）：
+ * - Web 端多文件格式：把 .gltf/.mtl 里的相对引用重写到选择的 blob URL 上；
+ * - 桌面端：把绝对本地路径（MTL 的 map_Kd 等）改写成 asset 协议 URL。
+ * `toAssetUrl` 必须是**同步**函数：LoadingManager.setURLModifier 不接受 Promise。
+ */
+export function createLoadingManager({ onProgress, onResourceError, assetMap, toAssetUrl } = {}) {
   const manager = new LoadingManager()
   manager.onProgress = (url, itemsLoaded, itemsTotal) => {
     onProgress?.({ url, itemsLoaded, itemsTotal, source: 'manager' })
@@ -56,9 +64,8 @@ export function createLoadingManager({ onProgress, onResourceError, assetMap } =
   manager.onError = (url) => {
     onResourceError?.(url)
   }
-  // Web 端多文件格式：把 .gltf/.mtl 里的相对引用重写到选择的 blob URL 上
-  if (assetMap && assetMap.size > 0) {
-    manager.setURLModifier((requested) => resolveAssetUrl(requested, assetMap))
+  if ((assetMap && assetMap.size > 0) || typeof toAssetUrl === 'function') {
+    manager.setURLModifier((requested) => normalizeReferenceUrl(requested, { assetMap, toAssetUrl }))
   }
   return manager
 }
@@ -131,6 +138,7 @@ async function loadStl({ manager, url, onFileProgress }) {
  * @param {object} [options.renderer] 用于 KTX2 能力探测
  * @param {object} [options.token] createLoadToken() 产出的取消令牌
  * @param {Map<string,string>} [options.assetMap] 相对路径 → URL（Web 多文件格式用）
+ * @param {(path: string) => string} [options.toAssetUrl] 本地绝对路径 → asset URL 的**同步**转换器（桌面端）
  * @returns {Promise<{root: object, animations: Array, scenes: Array}>}
  */
 export async function loadModel({
@@ -139,6 +147,7 @@ export async function loadModel({
   renderer = null,
   token = null,
   assetMap = null,
+  toAssetUrl = null,
   onProgress,
   onResourceError,
 } = {}) {
@@ -150,7 +159,7 @@ export async function loadModel({
     throw new Error(`FORMAT_NOT_IMPLEMENTED: ${format.id}`)
   }
 
-  const manager = createLoadingManager({ onProgress, onResourceError, assetMap })
+  const manager = createLoadingManager({ onProgress, onResourceError, assetMap, toAssetUrl })
   const onFileProgress = (event) => {
     if (event?.total > 0) {
       onProgress?.({ url, loaded: event.loaded, total: event.total, source: 'file' })

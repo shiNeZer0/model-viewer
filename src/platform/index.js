@@ -179,3 +179,30 @@ export async function revokeGrants() {
 
 /** 供 UI 统一翻译错误：平台层抛出的错误码与后端一致 */
 export { describeError }
+
+/* ------------------------- 贴图引用的路径转换器（M6-3） ------------------------- */
+
+let localPathConverterPromise = null
+
+/**
+ * 取得「本地绝对路径 → asset URL」的**同步**转换器（桌面端），Web 端为 null。
+ *
+ * 这里必须是 async 取一次、之后同步使用：
+ * - `LoadingManager.setURLModifier` 的回调是同步的，不能返回 Promise；
+ * - 而 `@tauri-apps/api` 又是动态 import 的（不能让 Web 首屏包进 Tauri 依赖），
+ *   所以只能在加载模型前 await 一次把转换器换成同步闭包。
+ */
+export async function ensureLocalPathConverter() {
+  if (!isTauri) return null
+  if (!localPathConverterPromise) {
+    localPathConverterPromise = loadTauriBackend()
+      .then((backend) => backend.createLocalPathConverter?.() ?? null)
+      .catch((error) => {
+        // 取不到转换器只影响"贴图写成绝对路径"的少数文件，不该阻断打开模型
+        localPathConverterPromise = null
+        console.warn('[platform] 初始化路径转换器失败', error)
+        return null
+      })
+  }
+  return localPathConverterPromise
+}

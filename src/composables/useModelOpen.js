@@ -12,6 +12,7 @@ import { collectModelStats } from '../core/three/stats.js'
 import {
   capabilities,
   describeError,
+  ensureLocalPathConverter,
   openModelAtPath,
   openModelSources,
   subscribeModelDrop,
@@ -79,10 +80,15 @@ export function useModelOpen(engineRef) {
     const startedAt = performance.now()
 
     try {
+      // 桌面端：贴图若写成绝对路径（MTL 的 map_Kd 等），需要这个同步转换器把请求改写到 asset 协议
+      const toAssetUrl = await ensureLocalPathConverter()
+      if (token.cancelled) return
+
       const result = await loadModel({
         url: source.url,
         formatId: source.loadFormatId,
         assetMap: source.assetMap,
+        toAssetUrl,
         renderer: engine.renderer,
         token,
         onProgress: (event) => model.setProgress(event),

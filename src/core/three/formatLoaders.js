@@ -7,7 +7,8 @@
  * 1. **OBJ 的材质在同目录的 .mtl 里**：找不到就降级为默认黏土材质，并把"缺 MTL"当提示而非错误
  *    （纯几何 OBJ 完全合法，不该报错）；
  * 2. **贴图路径可能是绝对本地路径**（导出器常把 MTL 里的 map_Kd 写成 `C:\...` 或 `file:///...`），
- *    需要重写成 asset 协议 URL——由调用方传入 `mapReferenceUrl`（平台相关，故不在此处硬编码）；
+ *    需要重写成 asset 协议 URL——统一由 ModelLoader 装在 LoadingManager 的 URL 修饰器里完成
+ *    （平台相关的转换器由调用方传入 `toAssetUrl`，本模块只做纯函数判定，不硬编码平台逻辑）；
  * 3. **3MF 是 Z-up 且数值单位通常是毫米**：轴向修正交由 orientation.js 按设置处理，这里只提示单位。
  *
  * 纯函数（siblingUrl / extractLocalPath / normalizeReferenceUrl）单独导出，可在 Node 下单测。
@@ -72,9 +73,40 @@ export function extractLocalPath(reference) {
 }
 
 /**
+ * 从「已被 loader 拼上目录前缀」的请求里救回绝对本地路径。
+ *
+ * 为什么必须有这一层：MTLLoader 自带的 resolveURL 只把 `http(s)://` 当绝对地址，
+ * 其余一律 `baseUrl + url`。于是 `map_Kd C:\tex\a.png` 这类写法到达 URL 修饰器时
+ * 已经变成 `asset://localhost/E%3A%5Cmodels%5CC:\tex\a.png`，直接用 extractLocalPath 认不出来。
+ *
+ * 判定规则（取**最后**一个候选，前面的盘符属于 baseUrl 自身）：
+ * - 候选形如 `X:\` 或 `X:/`；
+ * - `X:` 之后不能紧跟第二个分隔符 —— `X://` 是 scheme（`http://` 的 `p:/`、`asset://` 的 `t:/`），
+ *   而 `C:\` / `C:/` 才是路径。注意**不能**用"候选前面是不是字母"来判 scheme：
+ *   `%5C`（编码后的 `\`）本身就以字母结尾，会把合法的 `...%5CC:\tex` 误杀。
+ */
+export function extractEmbeddedLocalPath(requested) {
+  if (typeof requested !== 'string' || !requested) return null
+  // 本身就是绝对路径的（含 file://）交给 extractLocalPath，这里只处理"被拼过前缀"的情况
+  if (extractLocalPath(requested)) return null
+
+  const candidates = []
+  const pattern = /[a-zA-Z]:[\\/]/g
+  for (const match of requested.matchAll(pattern)) {
+    const after = requested[match.index + 3]
+    if (after === '/' || after === '\\') continue
+    candidates.push(match.index)
+  }
+  if (!candidates.length) return null
+
+  return extractLocalPath(requested.slice(candidates[candidates.length - 1]))
+}
+
+/**
  * 把加载器请求的 URL 规范化：
  * 1. 先走 assetMap（Web 端多文件选择的 blob 映射，含 basename 兜底）；
- * 2. 再识别绝对本地路径并用调用方给的转换器改写成 asset 协议 URL（桌面端）。
+ * 2. 再识别绝对本地路径并用调用方给的转换器改写成 asset 协议 URL（桌面端）；
+ * 3. 最后尝试从被拼过前缀的 URL 里救回绝对路径（MTLLoader 的 map_Kd 就属于这种）。
  * 命中不了就原样返回——绝不吞掉原始请求，缺失资源才能被 LoadingManager 正常上报。
  */
 export function normalizeReferenceUrl(requested, { assetMap, toAssetUrl } = {}) {
@@ -83,7 +115,7 @@ export function normalizeReferenceUrl(requested, { assetMap, toAssetUrl } = {}) 
   const mapped = resolveAssetUrl(requested, assetMap)
   if (mapped !== requested) return mapped
 
-  const localPath = extractLocalPath(requested)
+  const localPath = extractLocalPath(requested) ?? extractEmbeddedLocalPath(requested)
   if (localPath && typeof toAssetUrl === 'function') {
     const assetUrl = toAssetUrl(localPath)
     if (typeof assetUrl === 'string' && assetUrl) return assetUrl
@@ -100,10 +132,8 @@ function applyDefaultMaterial(root) {
 }
 
 /** FBX：材质是 MeshPhongMaterial，three 可直接渲染；动画在 group.animations 上 */
-export async function loadFbx({ manager, url, mapReferenceUrl }) {
+export async function loadFbx({ manager, url }) {
   const { FBXLoader } = await import('three/addons/loaders/FBXLoader.js')
-  if (mapReferenceUrl) manager.setURLModifier(mapReferenceUrl)
-
   const loader = new FBXLoader(manager)
   const root = await loader.loadAsync(url)
   const animations = Array.isArray(root?.animations) ? root.animations : []
@@ -111,13 +141,11 @@ export async function loadFbx({ manager, url, mapReferenceUrl }) {
 }
 
 /** OBJ：先尝试同目录同名 .mtl，失败则降级为默认材质并提示 */
-export async function loadObj({ manager, url, mapReferenceUrl }) {
+export async function loadObj({ manager, url }) {
   const [{ OBJLoader }, { MTLLoader }] = await Promise.all([
     import('three/addons/loaders/OBJLoader.js'),
     import('three/addons/loaders/MTLLoader.js'),
   ])
-  if (mapReferenceUrl) manager.setURLModifier(mapReferenceUrl)
-
   const warnings = []
   const mtlUrl = siblingUrl(url, 'mtl')
   let materials = null
@@ -162,10 +190,8 @@ export async function loadPly({ manager, url }) {
 }
 
 /** 3MF：ZIP 容器，几何 + 基础材质；Z-up 由 orientation.js 按设置处理 */
-export async function loadThreeMf({ manager, url, mapReferenceUrl }) {
+export async function loadThreeMf({ manager, url }) {
   const { ThreeMFLoader } = await import('three/addons/loaders/3MFLoader.js')
-  if (mapReferenceUrl) manager.setURLModifier(mapReferenceUrl)
-
   const loader = new ThreeMFLoader(manager)
   const root = await loader.loadAsync(url)
 

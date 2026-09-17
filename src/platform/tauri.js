@@ -28,6 +28,15 @@ export function toLoaderUrl(filePath) {
   return convertFileSrc(filePath)
 }
 
+/**
+ * 供 loader 的 URL 修饰器使用的**同步**转换器。
+ * 必须是同步的：LoadingManager.setURLModifier 的回调不接受 Promise，
+ * 而 FBO/MTL/FBX 里的贴图引用是加载过程中临时到达的，无法提前批量转换。
+ */
+export function createLocalPathConverter() {
+  return (filePath) => (typeof filePath === 'string' && filePath ? convertFileSrc(filePath) : '')
+}
+
 export function probeModelFile(path) {
   return invoke('probe_model_file', { path })
 }

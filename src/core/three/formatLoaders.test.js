@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { extractLocalPath, nameOfUrl, normalizeReferenceUrl, siblingUrl } from './formatLoaders.js'
+import {
+  extractEmbeddedLocalPath,
+  extractLocalPath,
+  nameOfUrl,
+  normalizeReferenceUrl,
+  siblingUrl,
+} from './formatLoaders.js'
 
 describe('nameOfUrl', () => {
   it('从 URL 取文件名并解码', () => {
@@ -83,5 +89,65 @@ describe('normalizeReferenceUrl', () => {
     expect(normalizeReferenceUrl('')).toBe('')
     expect(normalizeReferenceUrl(null)).toBe(null)
     expect(normalizeReferenceUrl(undefined)).toBe(undefined)
+  })
+
+  it('MTL 场景：请求已被 MTLLoader 拼上 baseUrl 时也能救回绝对路径', () => {
+    const toAssetUrl = (path) => `asset://localhost/${encodeURIComponent(path)}`
+    // MTLLoader 自己只认 http(s) 为绝对地址，其余一律 baseUrl + url
+    expect(
+      normalizeReferenceUrl('asset://localhost/E%3A%5Cmodels%5CC:\\tex\\a.png', { toAssetUrl }),
+    ).toBe(toAssetUrl('C:\\tex\\a.png'))
+    // 原始形态（loader 直接给绝对路径）同样支持
+    expect(normalizeReferenceUrl('C:\\tex\\a.png', { assetMap: new Map(), toAssetUrl })).toBe(
+      toAssetUrl('C:\\tex\\a.png'),
+    )
+    // assetMap 优先级最高：Web 端相对引用走 blob，不会因为"顺手能转本地路径"就被改写
+    expect(
+      normalizeReferenceUrl('tex.png', {
+        assetMap: new Map([['tex.png', 'blob:http://localhost/tex']]),
+        toAssetUrl,
+      }),
+    ).toBe('blob:http://localhost/tex')
+  })
+})
+
+describe('extractEmbeddedLocalPath', () => {
+  it('从被拼过 baseUrl 的请求里救回盘符路径（取最后一个，前面的是 base 自身）', () => {
+    expect(extractEmbeddedLocalPath('asset://localhost/E%3A%5Cmodels%5CC:\\tex\\a.png')).toBe(
+      'C:\\tex\\a.png',
+    )
+    expect(extractEmbeddedLocalPath('asset://localhost/E:/models/C:/tex/a.png')).toBe(
+      'C:/tex/a.png',
+    )
+  })
+
+  it('file:/// 形态：从 file:/// 起截断而不是被后面的盘符带偏', () => {
+    expect(extractEmbeddedLocalPath('asset://localhost/E%3A%5Cmodels%5Cfile:///E:/tex/a.png')).toBe(
+      'E:/tex/a.png',
+    )
+  })
+
+  it('不误判 scheme 里的 X:/（http:// 的 p:/、asset:// 的 t:/）', () => {
+    expect(extractEmbeddedLocalPath('http://localhost/draco/draco_wasm_wrapper.js')).toBe(null)
+    expect(extractEmbeddedLocalPath('blob:http://localhost/abc')).toBe(null)
+    // 编码过的 baseUrl 里没有字面冒号，纯相对引用必须原样放行
+    expect(extractEmbeddedLocalPath('asset://localhost/E%3A%5Cmodels%5Ctex.png')).toBe(null)
+  })
+
+  it('本身就是绝对路径时交给 extractLocalPath，不在这里重复处理', () => {
+    expect(extractEmbeddedLocalPath('C:\\tex\\a.png')).toBe(null)
+    expect(extractEmbeddedLocalPath('file:///E:/a.png')).toBe(null)
+  })
+
+  it('未编码的 asset base：还原出的路径仍指向同一个文件（无害）', () => {
+    expect(extractEmbeddedLocalPath('asset://localhost/E:/models/tex.png')).toBe(
+      'E:/models/tex.png',
+    )
+  })
+
+  it('空输入返回 null', () => {
+    expect(extractEmbeddedLocalPath('')).toBe(null)
+    expect(extractEmbeddedLocalPath(null)).toBe(null)
+    expect(extractEmbeddedLocalPath(undefined)).toBe(null)
   })
 })

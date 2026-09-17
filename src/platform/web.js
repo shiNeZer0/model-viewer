@@ -70,6 +70,14 @@ export function createAssetMap(files) {
 }
 
 /**
+ * Web 端没有绝对本地路径（浏览器只给 blob），因此没有可用的路径转换器。
+ * 返回 null 而不是抛错：调用方据此跳过 URL 重写，贴图走 assetMap / 原样请求。
+ */
+export function createLocalPathConverter() {
+  return null
+}
+
+/**
  * 订阅 HTML5 拖放（仅 Web 端使用；桌面端由原生事件提供路径）。
  * @param {HTMLElement} target 拖放目标元素
  * @param {(files: File[]) => void} handler
