@@ -330,3 +330,24 @@
 【我给用户的建议取舍（待其确认，未拍板）】**UI 跟随明暗、3D 视口背景不跟随**（视口背景仍由「显示 → 背景」控制、默认深色）——理由：Blender/Maya 等主流三维软件即使 UI 是亮色，视口也常保持深色，更利于判断形体与材质；跟随会破坏用户已调好的观感。
 
 【行动约束】提出该方案时沙箱处于**只读**模式，实施需要用户批准写权限（用 sandbox_permissions 申请）。下一步动作：等用户回答"是否按此方案实施 / 是否只做跟随系统"，再动手。
+
+## 备注 Notes
+
+- [2026-09-17 10:18] [备注] 远端已建立：origin=git@github.com:shiNeZer0/model-viewer.git；push 需 danger-full-access；gc 已把 pack 从 47.79MiB 清到 2.87MiB — model-viewer 的远端仓库与环境约束（2026-09 建立，已验证推送成功）：
+
+- **远端**：`origin` = `git@github.com:shiNeZer0/model-viewer.git`（SSH 协议），主分支 `main` 已 `-u` 跟踪 `origin/main`。
+- **推送命令需要放宽沙箱**：`git push` 走 ssh 时 Git 会经 `sh.exe` 包装，在受限沙箱下报
+  `sh.exe: *** fatal error - couldn't create signal pipe, Win32 error 5`，随后 git 报
+  `Could not read from remote repository`。**这不是 SSH/密钥/权限问题**，是沙箱命名管道限制——
+  用 `sandbox_permissions: danger-full-access` 重试同一条命令即可成功（本次即如此）。
+  建议的 ssh 选项（避免交互卡住）：`GIT_SSH_COMMAND="ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"`。
+  注意：`git add/commit/log/status/gc/fsck` 等纯本地命令**不需要**放宽，只有 push/pull 这类走 ssh 的才需要。
+- **推送前体检结论（可复用）**：140 个受控文件，无 `node_modules/`、`src-tauri/target/`、`.env`、`.db`、密钥类文件入库；
+  `.gitignore` 覆盖 node_modules/dist/target。
+- **仓库体积已清理（已完成，2026-09）**：清理前 `in-pack: 12146 / size-pack: 47.79 MiB`，
+  而可达对象合计只有约 4 MiB —— pack 里混着大量**不可达历史**（早期 `git add -A` 留下的悬空对象）。
+  执行 `git gc --prune=now` 后：**pack 47.79 MiB → 2.87 MiB，对象 12146 → 424**，
+  `git fsck` 无 error/missing，HEAD 未变且与 `origin/main` 一致、提交数仍为 24。
+  **结论：以后遇到"可达文件很少但 pack 很大"，先用 `git rev-list --objects --all` 对比最大可达对象，
+  确认是悬空对象后直接 `git gc --prune=now` 即可**（推送本来只传可达对象，所以清理纯属本地瘦身）。
+- 注意：仓库根目录的 `PROJECT_MEMORY.md` 是 dsh-memoir 维护的记忆文件，**受版本控制**，记忆更新后需要一并提交再推送。
