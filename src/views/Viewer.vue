@@ -35,6 +35,27 @@
             />
             <EmptyDropHint v-else-if="!model.hasModel" @open="openViaDialog" />
           </ModelCanvas>
+
+          <!-- 浮层：信息 HUD（左上，快捷键 I 开关） -->
+          <InfoHud
+            v-model:visible="showInfoHud"
+            :fps="fps"
+            :frames="rendererInfo.renderedFrames ?? 0"
+            :webgl-version="rendererInfo.webglVersion"
+            :post-fx="rendererInfo.postFx !== false"
+            :error-text="renderError ? `${renderError.message}（${renderError.hint}）` : ''"
+          />
+
+          <!-- 浮层：动画控制条（底部，仅含动画的模型出现） -->
+          <AnimationBar
+            @play="onPlayAnimation"
+            @pause="onPauseAnimation"
+            @stop="onStopAnimation"
+            @seek="onSeekAnimation"
+            @speed="onAnimationSpeed"
+            @loop-mode="onAnimationLoopMode"
+            @select-clip="onSelectAnimationClip"
+          />
         </div>
       </el-main>
 
@@ -59,39 +80,12 @@
           <el-tab-pane label="显示" name="display">
             <DisplayPanel />
           </el-tab-pane>
-          <el-tab-pane :label="animationTabLabel" name="animation">
-            <AnimationPanel
-              @play="onPlayAnimation"
-              @pause="onPauseAnimation"
-              @stop="onStopAnimation"
-              @seek="onSeekAnimation"
-              @speed="onAnimationSpeed"
-              @loop-mode="onAnimationLoopMode"
-              @select-clip="onSelectAnimationClip"
-            />
-          </el-tab-pane>
           <el-tab-pane label="光照" name="lighting">
             <LightingPanel />
           </el-tab-pane>
         </el-tabs>
       </el-aside>
     </el-container>
-
-    <el-footer class="viewer__footer" height="30px">
-      <ViewerStatusBar
-        :file-name="model.fileName"
-        :format-label="formatLabel"
-        :size-text="sizeText"
-        :triangle-text="triangleText"
-        :fps="fps"
-        :gpu="rendererInfo.gpu"
-        :webgl-version="rendererInfo.webglVersion"
-        :runtime-label="capabilities.runtimeLabel"
-        :frames="rendererInfo.renderedFrames ?? 0"
-        :post-fx="rendererInfo.postFx !== false"
-        :error-text="renderError ? `${renderError.message}（${renderError.hint}）` : ''"
-      />
-    </el-footer>
   </el-container>
 </template>
 
@@ -102,17 +96,16 @@ import { useRouter } from 'vue-router'
 
 import EmptyDropHint from '../components/layout/EmptyDropHint.vue'
 import LoadingOverlay from '../components/layout/LoadingOverlay.vue'
-import ViewerStatusBar from '../components/layout/ViewerStatusBar.vue'
 import ViewerToolbar from '../components/layout/ViewerToolbar.vue'
 import DisplayPanel from '../components/panels/DisplayPanel.vue'
-import AnimationPanel from '../components/panels/AnimationPanel.vue'
 import LightingPanel from '../components/panels/LightingPanel.vue'
 import ModelInfoPanel from '../components/panels/ModelInfoPanel.vue'
 import ModelTreePanel from '../components/panels/ModelTreePanel.vue'
+import AnimationBar from '../components/viewer/AnimationBar.vue'
+import InfoHud from '../components/viewer/InfoHud.vue'
 import ModelCanvas from '../components/viewer/ModelCanvas.vue'
 import { useHotkeys } from '../composables/useHotkeys.js'
 import { useModelOpen } from '../composables/useModelOpen.js'
-import { resolveFormatById } from '../constants/formats.js'
 import { DEFAULT_VIEW_PRESET, VIEW_PRESETS } from '../core/three/viewPresets.js'
 import { capabilities } from '../platform/index.js'
 import { useAnimationStore } from '../stores/animationStore.js'
@@ -120,7 +113,7 @@ import { useDisplayStore } from '../stores/displayStore.js'
 import { useLightingStore } from '../stores/lightingStore.js'
 import { useModelStore } from '../stores/modelStore.js'
 import { useSettingsStore } from '../stores/settingsStore.js'
-import { formatBytes, formatCount } from '../utils/format.js'
+import { formatCount } from '../utils/format.js'
 
 const router = useRouter()
 const model = useModelStore()
@@ -138,21 +131,16 @@ const renderError = ref(null)
 const activeTab = ref('info')
 /** 当前视图预设（不持久化：它描述的是"这一眼"而不是偏好） */
 const currentPreset = ref(DEFAULT_VIEW_PRESET)
+/** 信息 HUD 是否显示（会话级：快捷键 I 切换，HUD 自带折叠按钮） */
+const showInfoHud = ref(true)
 
 const { openViaDialog, cancelLoading, fitView, registerDropTarget } = useModelOpen(engineRef)
 
 let unlistenDrop = () => {}
 
-const formatLabel = computed(() => resolveFormatById(model.formatId)?.label ?? '—')
-const sizeText = computed(() => formatBytes(model.sizeBytes))
-const triangleText = computed(() => formatCount(model.stats?.triangleCount ?? 0))
 /** 层级标签页带上节点数，方便一眼看出模型复杂度 */
 const treeTabLabel = computed(() =>
   model.hierarchyCount ? `层级 (${formatCount(model.hierarchyCount)})` : '层级',
-)
-/** 动画标签页带片段数；没有动画时只显示"动画" */
-const animationTabLabel = computed(() =>
-  animation.clips.length ? `动画 (${animation.clips.length})` : '动画',
 )
 
 onMounted(async () => {
@@ -273,8 +261,11 @@ useHotkeys(
       display.update('shadingMode', next)
     },
     b: () => display.update('showBoundingBox', !display.showBoundingBox),
+    i: () => {
+      showInfoHud.value = !showInfoHud.value
+    },
   },
-  { enabled: () => model.hasModel },
+  { enabled: () => true },
 )
 
 /* ------------------------------- 引擎回调 ------------------------------- */
