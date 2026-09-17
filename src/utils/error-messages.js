@@ -20,7 +20,9 @@ const ERROR_TEMPLATES = {
   GRANT_FAILED: (detail) => `授权过程出错：${detail}`,
   PROBE_FAILED: (detail) => `文件探测失败：${detail}`,
   LOAD_FAILED: (detail) => `模型解析失败：${detail}`,
-  FORMAT_NOT_IMPLEMENTED: (detail) => `该格式的加载器尚未实现（计划在 M5 提供）：${detail}`,
+  FORMAT_NOT_IMPLEMENTED: (detail) => `该格式的加载器尚未实现：${detail}`,
+  REOPEN_UNSUPPORTED: () =>
+    'Web 预览无法按路径重新打开历史文件（浏览器不允许读取未经本次授权的文件），请重新选择文件',
   LOAD_CANCELLED: () => '已取消加载',
 }
 

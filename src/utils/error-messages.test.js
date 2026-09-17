@@ -38,7 +38,7 @@ describe('describeError', () => {
   it('已知错误码翻译为中文提示', () => {
     expect(describeError('UNSUPPORTED_FORMAT: .exe')).toBe('不支持的文件格式：.exe')
     expect(describeError('GRANT_LIMIT_EXCEEDED: 32')).toContain('上限（32）')
-    expect(describeError(new Error('FORMAT_NOT_IMPLEMENTED: fbx'))).toContain('M5')
+    expect(describeError(new Error('FORMAT_NOT_IMPLEMENTED: fbx'))).toContain('尚未实现')
   })
 
   it('未知错误码原样返回，避免吞掉信息', () => {
