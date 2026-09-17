@@ -24,6 +24,9 @@ src-tauri/gen/schemas
 public/draco
 public/basis
 
+# 性能回归用的生成物（scripts/make-benchmark-model.mjs 产出，MB 级）
+benchmark-models
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
