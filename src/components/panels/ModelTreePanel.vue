@@ -117,12 +117,21 @@ function onNodeClick(data) {
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
+  /*
+   * 关键：作为 el-tree 节点内容里的 flex 子项，必须 flex:1 + min-width:0 ——
+   * 只写 width:100% 时会与前面的展开箭头抢空间，且子项默认的 min-width:auto 不允许收窄到内容宽度以下，
+   * 于是长名字把整行撑宽（树容器 overflow:auto → 出现横向滚动），右边的「聚焦 / 显示隐藏」就被推到视野之外。
+   */
+  flex: 1;
+  min-width: 0;
   padding-right: 4px;
   font-size: 12px;
 }
 
 .tree-node__label {
+  /* 名字占满剩余空间、超出省略；min-width:0 是省略号能生效的前提 */
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
