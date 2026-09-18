@@ -39,6 +39,7 @@ const SETTING_KEYS = {
   centerModel: 'display.centerModel',
   alignToGround: 'display.alignToGround',
   showBoundingBox: 'display.showBoundingBox',
+  showLightGizmos: 'display.showLightGizmos',
   sourceUnit: 'display.sourceUnit',
   displayUnit: 'display.displayUnit',
   toneMapping: 'display.toneMapping',
@@ -71,6 +72,8 @@ export const useDisplayStore = defineStore('display', () => {
   const upAxis = ref(DEFAULT_UP_AXIS)
   /** M2：边界框与尺寸标注 */
   const showBoundingBox = ref(false)
+  /** 光源可视化：在视口里画出三盏灯的位置/朝向/颜色（默认关，属调试辅助） */
+  const showLightGizmos = ref(false)
   /** 模型原始数值的单位（raw = 不换算） */
   const sourceUnit = ref(DEFAULT_SOURCE_UNIT)
   /** 尺寸显示单位（auto = 按数值自动挑） */
@@ -101,6 +104,7 @@ export const useDisplayStore = defineStore('display', () => {
     alignToGround: alignToGround.value,
     upAxis: upAxis.value,
     showBoundingBox: showBoundingBox.value,
+    showLightGizmos: showLightGizmos.value,
     sourceUnit: sourceUnit.value,
     displayUnit: displayUnit.value,
     toneMapping: toneMapping.value,
@@ -157,6 +161,9 @@ export const useDisplayStore = defineStore('display', () => {
       }
       if (typeof saved[SETTING_KEYS.showBoundingBox] === 'boolean') {
         showBoundingBox.value = saved[SETTING_KEYS.showBoundingBox]
+      }
+      if (typeof saved[SETTING_KEYS.showLightGizmos] === 'boolean') {
+        showLightGizmos.value = saved[SETTING_KEYS.showLightGizmos]
       }
       if (resolveUnit(saved[SETTING_KEYS.sourceUnit])) {
         sourceUnit.value = saved[SETTING_KEYS.sourceUnit]
@@ -242,6 +249,9 @@ export const useDisplayStore = defineStore('display', () => {
       case 'showBoundingBox':
         showBoundingBox.value = Boolean(value)
         break
+      case 'showLightGizmos':
+        showLightGizmos.value = Boolean(value)
+        break
       case 'sourceUnit':
         if (!resolveUnit(value)) return
         sourceUnit.value = value
@@ -288,6 +298,7 @@ export const useDisplayStore = defineStore('display', () => {
     alignToGround.value = true
     upAxis.value = DEFAULT_UP_AXIS
     showBoundingBox.value = false
+    showLightGizmos.value = false
     sourceUnit.value = DEFAULT_SOURCE_UNIT
     displayUnit.value = DEFAULT_DISPLAY_UNIT
     toneMapping.value = normalizePostFxSettings().toneMapping
@@ -310,6 +321,7 @@ export const useDisplayStore = defineStore('display', () => {
     alignToGround,
     upAxis,
     showBoundingBox,
+    showLightGizmos,
     sourceUnit,
     displayUnit,
     toneMapping,

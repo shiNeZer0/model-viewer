@@ -37,6 +37,7 @@ import { EnvironmentManager, loadEquirectangularTexture } from './environment.js
 import { buildHierarchy } from './hierarchy.js'
 import { DEFAULT_IDLE_MS, createIdlePolicy, hasContinuousWork } from './idlePolicy.js'
 import { LightingRig, createDefaultLightingState, normalizeLightingState } from './lighting.js'
+import { LightGizmos } from './lightGizmos.js'
 import { ModelPlacement } from './modelPlacement.js'
 import { ModelOrientation } from './orientation.js'
 import { PostFx, normalizePostFxSettings } from './postfx.js'
@@ -117,6 +118,8 @@ export class ViewerEngine {
       alignToGround: options.alignToGround ?? true,
       // M2：边界框标注与单位
       showBoundingBox: options.showBoundingBox ?? false,
+      // 光源可视化（默认关：它是调光时的辅助，不该默认出现在查看器里）
+      showLightGizmos: options.showLightGizmos ?? false,
       sourceUnit: options.sourceUnit ?? DEFAULT_SOURCE_UNIT,
       displayUnit: options.displayUnit ?? DEFAULT_DISPLAY_UNIT,
       toneMapping: postFxSettings.toneMapping,
@@ -185,6 +188,10 @@ export class ViewerEngine {
 
     // M2：边界框与尺寸标注（CSS2D 标签复用引擎里的 CSS2D 渲染层）
     this.bbox = new BoundingBoxOverlay(this.scene)
+
+    // 光源可视化：把三盏灯的位置/朝向/颜色画出来（初始可见性跟着显示设置走）
+    this.lightGizmos = new LightGizmos(this.scene)
+    this.lightGizmos.setVisible(this.display.showLightGizmos)
 
     // M3：应用初始光照（默认影棚预设），保证首屏就有正确的打光
     this.applyLighting(this.lightingState)
@@ -624,6 +631,10 @@ export class ViewerEngine {
     })
     this.container.classList.toggle('mv-transparent-stage', this.display.background === 'transparent')
     this.stage.setHelpers({ showGrid: this.display.showGrid, showAxes: this.display.showAxes })
+    // 光源可视化开关（只在变化时动作，避免每帧重设）
+    if (this.display.showLightGizmos !== previous.showLightGizmos) {
+      this.lightGizmos.setVisible(this.display.showLightGizmos)
+    }
 
     this.postFx.setEnabled(this.display.postFxEnabled)
     this.postFx.setToneMapping(this.display.toneMapping)
@@ -643,6 +654,8 @@ export class ViewerEngine {
   applyLighting(lightingState) {
     this.lightingState = normalizeLightingState(lightingState ?? this.lightingState)
     this.lightingRig.apply(this.lightingState)
+    // 光源示意图跟着光照状态一起刷新（拖滑杆时高频调用，内部是就地改属性）
+    this.lightGizmos.update(this.lightingState)
 
     const texture = this.environment.apply(this.lightingState.environment)
     // 环境贴图既提供 IBL，也可以在 background=environment 时直接当背景（全景预设）
@@ -1070,6 +1083,7 @@ export class ViewerEngine {
     this.postFx.dispose()
     this.stage.dispose()
     this.bbox?.dispose()
+    this.lightGizmos?.dispose()
     this.animation?.dispose()
     this.lightingRig?.dispose()
     this.environment?.dispose()

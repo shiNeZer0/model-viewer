@@ -141,6 +141,19 @@
     </el-form>
 
     <el-divider content-position="left">三点光源</el-divider>
+
+    <div class="lighting-panel__gizmos">
+      <el-switch
+        size="small"
+        :model-value="display.showLightGizmos"
+        @update:model-value="display.update('showLightGizmos', $event)"
+      />
+      <span class="lighting-panel__gizmos-label">在视口中显示光源</span>
+    </div>
+    <p class="lighting-panel__desc">
+      开启后视口里会画出三盏灯：彩色圆点表示位置（关闭的灯显示为灰色）、连线指向它的照射方向，
+      旁边标注角色名与强度。被模型挡住时依然可见，方便一边看位置一边调参数。
+    </p>
     <LightSourceEditor
       v-for="light in lights"
       :key="light.role"
@@ -187,6 +200,7 @@ import { computed, ref } from 'vue'
 import { LIGHTING_PRESETS, resolvePreset } from '../../constants/presets/lightingPresets.js'
 import { LIGHT_LIMITS, LIGHT_ROLES } from '../../core/three/lighting.js'
 import { capabilities, pickEnvironmentSource } from '../../platform/index.js'
+import { useDisplayStore } from '../../stores/displayStore.js'
 import { useLightingStore } from '../../stores/lightingStore.js'
 import { describeError } from '../../utils/error-messages.js'
 import LightSourceEditor from './LightSourceEditor.vue'
@@ -364,6 +378,18 @@ async function onRemoveTheme(row) {
   font-size: 12px;
   line-height: 1.6;
   color: var(--el-text-color-secondary);
+}
+
+.lighting-panel__gizmos {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.lighting-panel__gizmos-label {
+  font-size: 13px;
+  color: var(--el-text-color-regular);
 }
 
 .lighting-panel__hdr {

@@ -160,6 +160,28 @@ describe('displayStore 快照', () => {
     expect(display.toEngineSettings.upAxis).toBe('z-up')
   })
 
+  it('光源可视化（M6 补）：默认关闭，开关会进入引擎快照并会被 watch 观察到', async () => {
+    const display = useDisplayStore()
+    expect(display.toEngineSettings.showLightGizmos).toBe(false)
+    expect(display.SETTING_KEYS.showLightGizmos).toBe('display.showLightGizmos')
+
+    const seen = []
+    const snapshot = computed(() => display.toEngineSettings)
+    watch(snapshot, (value) => seen.push(value.showLightGizmos))
+
+    // 真值统一成 boolean（模板里 $event 可能是字符串）
+    await display.update('showLightGizmos', 'yes', { persist: false })
+    await nextTick()
+    expect(display.toEngineSettings.showLightGizmos).toBe(true)
+    expect(seen).toEqual([true])
+
+    await display.update('showLightGizmos', 0, { persist: false })
+    expect(display.toEngineSettings.showLightGizmos).toBe(false)
+
+    display.resetToDefaults()
+    expect(display.toEngineSettings.showLightGizmos).toBe(false)
+  })
+
   it('M6-2：轴向变化会让快照变化（引擎据此重算姿态、摆放与相机）', async () => {
     const display = useDisplayStore()
     const seen = []
