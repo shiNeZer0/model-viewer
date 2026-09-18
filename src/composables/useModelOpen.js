@@ -106,6 +106,9 @@ export function useModelOpen(engineRef) {
       })
       const stats = collectModelStats(result.root, { animationCount: result.animations.length })
       model.setReady({ root: result.root, stats })
+      // 入场动画在"上屏 + 状态就绪"之后才播：此时加载遮罩已开始移除，动画全程可见。
+      // 即使它被跳过（系统「减少动效」/位姿不可用），setModel 的瞬时适配也已把相机摆正。
+      engine.playEntranceAnimation()
       // loader 侧产生的提示（缺 MTL、3MF 单位说明等）一并展示
       for (const warning of result.warnings ?? []) model.addWarning(warning)
       // 着色模式相关的提示（如「模型过大已跳过线框」）交给显示面板展示

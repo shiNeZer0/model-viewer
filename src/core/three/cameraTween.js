@@ -14,6 +14,19 @@ export const DEFAULT_TWEEN_MS = 320
 export const MIN_TWEEN_MS = 80
 export const MAX_TWEEN_MS = 2000
 
+/**
+ * 模型入场动画（加载完成后的"推入"）参数。
+ * 比视图切换（320ms）慢一些才有"涌进来"的感觉；起点只由终点位姿推导，与上一个相机在哪无关。
+ */
+export const ENTRANCE_TWEEN_MS = 650
+export const ENTRANCE_START_FACTOR = 1.9
+export const ENTRANCE_LIFT_FACTOR = 0.12
+/**
+ * 推远倍数的合法区间。下限取 1（"不推远、只抬高"是合法组合，且与"原地不动"的退化情形相接），
+ * 上限 4：再远模型就小得看不清了。
+ */
+export const ENTRANCE_FACTOR_RANGE = { min: 1, max: 4 }
+
 /** 三次缓入缓出：起步与收尾都平滑，是相机移动最常用的缓动 */
 export function easeInOutCubic(t) {
   const x = Number.isFinite(t) ? Math.min(1, Math.max(0, t)) : 0
@@ -41,6 +54,52 @@ export function normalizePose(pose) {
   return { position, target }
 }
 
+/**
+ * 由「终点位姿」推导模型入场时的起点位姿（纯函数）。
+ *
+ * 起点 = 终点沿同一条视线方向推远 factor 倍，再抬高一截（lift × 距离）：
+ * 于是入场是"从更高更远处滑进来"，而不是原地放大。
+ * **起点只依赖终点**：不取决于上一个相机停在哪，所以每次加载的表现一致，也能完整单测。
+ *
+ * @param {{position: number[], target: number[]}} pose 适配后的终点位姿
+ * @param {{factor?: number, lift?: number}} [options]
+ * @returns {{position: number[], target: number[]}|null} 位姿非法/无方向时返回 null（调用方退化为瞬时）
+ */
+export function computeEntranceStartPose(
+  pose,
+  { factor = ENTRANCE_START_FACTOR, lift = ENTRANCE_LIFT_FACTOR } = {},
+) {
+  const destination = normalizePose(pose)
+  if (!destination) return null
+
+  const safeFactor = Number.isFinite(factor)
+    ? Math.min(ENTRANCE_FACTOR_RANGE.max, Math.max(ENTRANCE_FACTOR_RANGE.min, factor))
+    : ENTRANCE_START_FACTOR
+  const safeLift = Number.isFinite(lift) ? Math.max(0, lift) : ENTRANCE_LIFT_FACTOR
+
+  // 不推远也不抬高时直接返回终点：保证与 CameraTween「起终点相同→不动画」的判定一致，
+  // 也避免 tx + (px - tx) 这种浮点回环产生 1ULP 误差
+  if (safeFactor === 1 && safeLift === 0) {
+    return { position: [...destination.position], target: [...destination.target] }
+  }
+
+  const [px, py, pz] = destination.position
+  const [tx, ty, tz] = destination.target
+  const offset = [px - tx, py - ty, pz - tz]
+  const distance = Math.hypot(offset[0], offset[1], offset[2])
+  // 相机与目标重合时没有"视线方向"可推，交给调用方瞬时应用
+  if (!(distance > 0)) return null
+
+  return {
+    position: [
+      tx + offset[0] * safeFactor,
+      ty + offset[1] * safeFactor + distance * safeLift,
+      tz + offset[2] * safeFactor,
+    ],
+    target: [tx, ty, tz],
+  }
+}
+
 function vec3Equal(a, b, epsilon = 1e-6) {
   return (
     Math.abs(a[0] - b[0]) < epsilon &&
@@ -66,6 +125,18 @@ export function sampleCameraTween({ from, to, elapsedMs = 0, durationMs = DEFAUL
   const elapsed = Number.isFinite(elapsedMs) && elapsedMs > 0 ? elapsedMs : 0
   const progress = Math.min(1, elapsed / duration)
   const eased = easeInOutCubic(progress)
+
+  /*
+   * 两端直接取原值，不走 lerp：
+   * `a + (b - a) * 1` 在 IEEE754 下可能差 1ULP，而"终点与适配位姿**完全一致**"是本功能的硬要求
+   * （否则连续切视角会留下极小但可累积的漂移，几何体也会有一丝错位）。
+   */
+  if (progress >= 1) {
+    return { position: [...to.position], target: [...to.target], progress: 1, done: true }
+  }
+  if (progress <= 0) {
+    return { position: [...from.position], target: [...from.target], progress: 0, done: false }
+  }
 
   return {
     position: lerp3(from.position, to.position, eased),

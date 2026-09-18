@@ -23,7 +23,15 @@ import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js'
 import { resolveExportRatio } from '../screenshot.js'
 import { BoundingBoxOverlay } from './boundingBox.js'
 import { AnimationController, MAX_FRAME_DELTA } from './animation.js'
-import { CameraTween, DEFAULT_TWEEN_MS, normalizePose } from './cameraTween.js'
+import {
+  CameraTween,
+  DEFAULT_TWEEN_MS,
+  ENTRANCE_LIFT_FACTOR,
+  ENTRANCE_START_FACTOR,
+  ENTRANCE_TWEEN_MS,
+  computeEntranceStartPose,
+  normalizePose,
+} from './cameraTween.js'
 import { disposeObject3D } from './disposal.js'
 import { EnvironmentManager, loadEquirectangularTexture } from './environment.js'
 import { buildHierarchy } from './hierarchy.js'
@@ -64,6 +72,8 @@ export class ViewerEngine {
     this.orientation = null
     /** 当前模型的格式 id（auto 模式判断是否按 Z-up 处理时要用） */
     this.formatId = ''
+    /** 最近一次 fitToObject 算出的相机目标位姿 —— 模型入场动画的终点（见 playEntranceAnimation） */
+    this.lastCameraDestination = null
     /** 用户通过层级树手动设置的可见性（覆盖模型原始值） */
     this.visibilityOverrides = new Map()
     /** 模型自带的原始可见性 */
@@ -313,6 +323,26 @@ export class ViewerEngine {
   }
 
   /**
+   * 启动一段相机补间（视角切换与模型入场共用）。
+   *
+   * 把"唤醒循环 + 清帧时间基准"收在这一处：两者都是补间能正常播放的前提，
+   * 分开写迟早会漏掉一处（曾经踩过"命令改了状态但没有帧渲染"的坑）。
+   * @returns {boolean} 是否真的进入动画状态（起点终点相同则为 false）
+   */
+  startCameraTween({ from, to }, { durationMs }) {
+    if (!this.cameraTween.start({ from, to }, { durationMs })) return false
+
+    /*
+     * 清掉帧时间基准：从空闲唤醒时第一帧的 delta 会被夹到 MAX_FRAME_DELTA（100ms），
+     * 对 320ms 的补间等于"起步就跳掉近 1/3"，看起来像卡了一下。清空后第一帧 delta=0。
+     */
+    this.lastFrameTime = 0
+    // 视角多由面板/快捷键触发（加载也可能已超过 idleMs），循环当时往往是停的，必须自己唤醒
+    this.noteActivity()
+    return true
+  }
+
+  /**
    * 平滑移动到目标位姿（视角切换用）。
    * @returns {boolean} 是否真的启动了动画（false = 已瞬时落位：起点终点相同 / 减少动效 / 位姿非法）
    */
@@ -331,26 +361,35 @@ export class ViewerEngine {
       return false
     }
 
-    const started = this.cameraTween.start(
+    const started = this.startCameraTween(
       {
         from: { position: this.camera.position.toArray(), target: this.controls.target.toArray() },
         to: destination,
       },
       { durationMs },
     )
-    if (!started) {
-      applyInstantly()
-      return false
-    }
+    if (!started) applyInstantly()
+    return started
+  }
 
-    /*
-     * 清掉帧时间基准：从空闲唤醒时第一帧的 delta 会被夹到 MAX_FRAME_DELTA（100ms），
-     * 对 320ms 的补间等于"起步就跳掉近 1/3"，看起来像卡了一下。清空后第一帧 delta=0。
-     */
-    this.lastFrameTime = 0
-    // 视角多由侧栏面板或快捷键触发，此时循环可能已经因空闲停掉，必须自己唤醒（否则"点了没反应"）
-    this.noteActivity()
-    return true
+  /**
+   * 模型入场动画：从"更远、略高处的同一视角"平滑推到最近一次适配好的位姿。
+   *
+   * 起点由**终点**推导（见 computeEntranceStartPose），因此与"上一个相机停在哪"无关，
+   * 每次加载的表现一致。返回 false 表示没播（无模型 / 无已适配位姿 / 系统「减少动效」），
+   * 此时相机保持在 setModel 已瞬时摆好的适配位姿上，不会出现半个动画。
+   */
+  playEntranceAnimation({ durationMs = ENTRANCE_TWEEN_MS } = {}) {
+    if (this.disposed || !this.currentRoot || !this.lastCameraDestination) return false
+    if (this.prefersReducedMotion()) return false
+
+    const from = computeEntranceStartPose(this.lastCameraDestination, {
+      factor: ENTRANCE_START_FACTOR,
+      lift: ENTRANCE_LIFT_FACTOR,
+    })
+    if (!from) return false
+
+    return this.startCameraTween({ from, to: this.lastCameraDestination }, { durationMs })
   }
 
   /** 打断补间（用户接管相机 / 模型被替换），就停在当前位置 */
@@ -797,6 +836,8 @@ export class ViewerEngine {
       if (fit) fitResult = this.fitToObject(this.currentRoot, { presetId, box: this.lastBox })
     } else {
       this.lastBox = null
+      // 没有模型就没有"适配位姿"：清掉它，入场动画自然不会误播（playEntranceAnimation 也会判 currentRoot）
+      this.lastCameraDestination = null
       this.placement = null
       this.orientation = null
       this.formatId = ''
@@ -847,6 +888,10 @@ export class ViewerEngine {
     this.camera.updateProjectionMatrix()
 
     const destination = { position: placement.position, target: sphere.center.toArray() }
+    // 记下"适配后的目标位姿"：入场动画（playEntranceAnimation）要用它推导入场起点，
+    // 这样不必重算一遍 computeCameraPlacement，也不必改动 fitToObject 的签名与返回结构
+    this.lastCameraDestination = destination
+
     if (animate) {
       this.animateCameraTo(destination)
     } else {

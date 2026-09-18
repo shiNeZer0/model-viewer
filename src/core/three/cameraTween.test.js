@@ -3,9 +3,14 @@ import { describe, expect, it } from 'vitest'
 import {
   CameraTween,
   DEFAULT_TWEEN_MS,
+  ENTRANCE_FACTOR_RANGE,
+  ENTRANCE_LIFT_FACTOR,
+  ENTRANCE_START_FACTOR,
+  ENTRANCE_TWEEN_MS,
   MAX_TWEEN_MS,
   MIN_TWEEN_MS,
   clampDuration,
+  computeEntranceStartPose,
   easeInOutCubic,
   normalizePose,
   sampleCameraTween,
@@ -174,5 +179,104 @@ describe('CameraTween', () => {
     tween.update(Number.NaN)
     const sample = tween.update(200)
     expect(sample.done).toBe(true)
+  })
+
+  it('终点是精确赋值（不是 lerp 结果，避免 1ULP 漂移）', () => {
+    // 故意用会让 a + (b - a) * 1 出现浮点误差的数字
+    const from = { position: [0.1, -0.2, 0.3], target: [0, 0, 0] }
+    const to = { position: [1.1, 0.7, -2.3], target: [0.3, -0.4, 0.9] }
+    const tween = new CameraTween({ durationMs: 100 })
+    tween.start({ from, to })
+    const sample = tween.update(100)
+    expect(sample.position).toEqual(to.position)
+    expect(sample.target).toEqual(to.target)
+  })
+})
+
+describe('computeEntranceStartPose（模型入场起点）', () => {
+  const DESTINATION = { position: [3, 2, 3], target: [0, 1, 0] }
+
+  it('沿同一视线方向推远，目标点不变', () => {
+    const start = computeEntranceStartPose(DESTINATION)
+    const destinationOffset = [
+      DESTINATION.position[0] - DESTINATION.target[0],
+      DESTINATION.position[1] - DESTINATION.target[1],
+      DESTINATION.position[2] - DESTINATION.target[2],
+    ]
+    const startOffset = [
+      start.position[0] - start.target[0],
+      start.position[1] - start.target[1],
+      start.position[2] - start.target[2],
+    ]
+
+    // 方向一致：水平分量按同一比例放大
+    expect(startOffset[0] / destinationOffset[0]).toBeCloseTo(ENTRANCE_START_FACTOR, 6)
+    expect(startOffset[2] / destinationOffset[2]).toBeCloseTo(ENTRANCE_START_FACTOR, 6)
+    // target 原样保留
+    expect(start.target).toEqual(DESTINATION.target)
+  })
+
+  it('起点比终点更远、更高（入场是"从高处滑进来"）', () => {
+    const start = computeEntranceStartPose(DESTINATION)
+    const distanceOf = (pose) =>
+      Math.hypot(
+        pose.position[0] - pose.target[0],
+        pose.position[1] - pose.target[1],
+        pose.position[2] - pose.target[2],
+      )
+    expect(distanceOf(start)).toBeGreaterThan(distanceOf(DESTINATION))
+    expect(start.position[1]).toBeGreaterThan(DESTINATION.position[1])
+  })
+
+  it('lift=0 时不抬高（Y 只按 factor 放大）', () => {
+    const start = computeEntranceStartPose(DESTINATION, { lift: 0 })
+    const offsetY = DESTINATION.position[1] - DESTINATION.target[1]
+    expect(start.position[1]).toBeCloseTo(DESTINATION.position[1] + offsetY * (ENTRANCE_START_FACTOR - 1), 6)
+  })
+
+  it('factor=1 且 lift=0 时与终点完全相同 → 补间会判定"不用动"，自然退化为瞬时', () => {
+    const start = computeEntranceStartPose(DESTINATION, { factor: 1, lift: 0 })
+    expect(start).toEqual(DESTINATION)
+    expect(new CameraTween().start({ from: start, to: DESTINATION })).toBe(false)
+  })
+
+  it('factor 越界被夹取，非法值回落默认', () => {
+    const small = computeEntranceStartPose(DESTINATION, { factor: 0.5 })
+    const clampedSmall = computeEntranceStartPose(DESTINATION, { factor: ENTRANCE_FACTOR_RANGE.min })
+    expect(small).toEqual(clampedSmall)
+
+    const huge = computeEntranceStartPose(DESTINATION, { factor: 99 })
+    const clampedHuge = computeEntranceStartPose(DESTINATION, { factor: ENTRANCE_FACTOR_RANGE.max })
+    expect(huge).toEqual(clampedHuge)
+
+    const fallback = computeEntranceStartPose(DESTINATION, { factor: Number.NaN, lift: Number.NaN })
+    expect(fallback).toEqual(computeEntranceStartPose(DESTINATION))
+  })
+
+  it('位姿非法或相机与目标重合时返回 null（调用方退化为瞬时）', () => {
+    expect(computeEntranceStartPose(null)).toBeNull()
+    expect(computeEntranceStartPose({ position: [0, 0], target: [0, 0, 0] })).toBeNull()
+    expect(computeEntranceStartPose({ position: [0, Number.NaN, 0], target: [0, 0, 0] })).toBeNull()
+    expect(computeEntranceStartPose({ position: [1, 1, 1], target: [1, 1, 1] })).toBeNull()
+  })
+
+  it('与补间组合：能起动画，且跑完后精确落在适配位姿上', () => {
+    const start = computeEntranceStartPose(DESTINATION)
+    const tween = new CameraTween({ durationMs: ENTRANCE_TWEEN_MS })
+    expect(tween.start({ from: start, to: DESTINATION })).toBe(true)
+
+    // 中途未到点
+    const mid = tween.update(ENTRANCE_TWEEN_MS / 2)
+    expect(mid.done).toBe(false)
+
+    const end = tween.update(ENTRANCE_TWEEN_MS)
+    expect(end.done).toBe(true)
+    expect(end.position).toEqual(DESTINATION.position)
+    expect(end.target).toEqual(DESTINATION.target)
+  })
+
+  it('入场时长比视图切换更长（才有"涌进来"的感觉）', () => {
+    expect(ENTRANCE_TWEEN_MS).toBeGreaterThan(DEFAULT_TWEEN_MS)
+    expect(ENTRANCE_LIFT_FACTOR).toBeGreaterThan(0)
   })
 })
