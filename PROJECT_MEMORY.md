@@ -210,6 +210,19 @@
 【验证】vitest **495/495（42 文件，基线 463/41）**；diagnose-sfc 15/15；`pnpm build` 成功。新增 `postfxStore.test.js`；`postfx.test.js` 12→26（含**内置通道冒烟测试**：用真实 Scene+PerspectiveCamera 逐个 create/setSize/dispose）。
 
 【仍待】① git commit；② **真机验证五个通道的实际画面与兼容性**（Node 测不了 GPU；尤其要确认 AO/泛光在半透明背景与"仅线框"下是否异常）；③ 用 §29.4 基准测 GTAO 默认开带来的开销 —— 这是"效果优先"的代价，必须用数字说话。
+- [2026-09-21 18:15] [工作记录] 已提交并推送：远端 origin/main = c06e4f0（§36 性能优化 + §37 阴影与后处理 + 阴影 bug 修复，34 文件） — model-viewer 本轮改动已提交并推送完成。**远端 origin/main = c06e4f0**（本地与远端一致，`main...origin/main` 无 ahead/behind）。
+
+【提交】c06e4f0 `feat(render): 阴影与后处理通道扩展，以及渲染/加载性能优化` —— **34 个文件**（19 改 + 15 新），conventional commit + 四段 body（性能优化 §36 / 阴影与后处理 §37 / 阴影 bug 修复 §37.7 / 验证结果）。
+
+【本提交覆盖的两轮工作】
+1. 渲染与加载性能优化（§36）：resize 去抖、跳过恒等饱和度 pass、光源开关改用 intensity=0、解码器应用级共享、低性能模式、性能快照出口、修掉 ModelCanvas 重复 watch。
+2. 阴影与后处理（§37）：PostFx 重构为可插拔通道（`src/core/three/postfx/` 下 7 个文件）；五个通道（描边/GTAO/泛光/景深/调色）；阴影（主光投影 + ShadowMaterial 接收面 + autoUpdate=false 脏标记）；并修复"模型完全没有阴影"（§37.7：光源侧漏首次同步 + 模型网格从未开 castShadow）。
+
+【验证基线（最新，供后人对齐）】vitest **498/498（42 文件）**、`scripts/diagnose-sfc.cjs` **15/15**、`pnpm build` 成功。未跑 cargo test（零 Rust 改动）。
+
+【推送要点（复现用）】push 必须 `sandbox_permissions: danger-full-access`：受限沙箱下 ssh 经 sh.exe 包装会报 `couldn't create signal pipe, Win32 error 5`。本次用 `$env:GIT_SSH_COMMAND = 'ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20'` 加 `git push`，一次成功。**git commit 的 -m 消息避开 ASCII 双引号**（PowerShell 会拆成 pathspec），多段内容用多个 -m 传。
+
+【仍未做（用户侧真机验收）】① 阴影是否真的出现（本次刚修的 bug，需用户确认）；② 五个后处理通道的实际画面与兼容性（AO/泛光在半透明背景与「仅线框」下是否异常）；③ 用 §29.4 基准测 GTAO 默认开的性能代价 —— 这是"效果优先"的代价，数字仍缺；④ §36.6 与 §37.6 里列出的其余人工确认项。
 
 ## 经验教训 Lessons Learned
 
