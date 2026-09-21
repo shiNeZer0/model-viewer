@@ -45,6 +45,15 @@
         <dd>{{ runtimeLabel }}</dd>
       </dl>
 
+      <button
+        class="info-hud__action"
+        type="button"
+        title="复制性能快照：FPS、绘制缓冲、后处理 pass、三角面与 drawCall（用于对比优化前后）"
+        @click="emit('snapshot')"
+      >
+        复制性能快照
+      </button>
+
       <p v-if="errorText" class="info-hud__error">{{ errorText }}</p>
     </div>
   </div>
@@ -71,7 +80,7 @@ const props = defineProps({
 // 模板通过 props 名直接访问（visible / frames / fps …），无需在脚本里再引用
 void props
 
-const emit = defineEmits(['update:visible'])
+const emit = defineEmits(['update:visible', 'snapshot'])
 
 const model = useModelStore()
 const display = useDisplayStore()
@@ -169,6 +178,23 @@ const dimensionText = computed(() => {
 .info-hud__error {
   margin: 6px 0 0;
   color: var(--el-color-danger);
+}
+
+.info-hud__action {
+  width: 100%;
+  margin-top: 6px;
+  padding: 3px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--el-text-color-regular);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.info-hud__action:hover {
+  border-color: var(--el-color-primary);
+  color: var(--el-color-primary);
 }
 
 .info-hud__chip {

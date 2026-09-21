@@ -9,6 +9,56 @@ import {
   resolveBackgroundMode,
 } from './stage.js'
 
+describe('阴影接收面', () => {
+  it('按开关补建与隐藏，并接收阴影', () => {
+    const scene = new Scene()
+    const stage = new Stage(scene)
+
+    stage.setHelpers({ showAxes: false, showShadow: false })
+    expect(stage.shadowCatcher).toBe(null)
+
+    stage.setHelpers({ showAxes: false, showShadow: true })
+    expect(stage.shadowCatcher).not.toBe(null)
+    expect(stage.shadowCatcher.receiveShadow).toBe(true)
+    expect(stage.shadowCatcher.visible).toBe(true)
+    expect(scene.children).toContain(stage.shadowCatcher)
+
+    stage.setHelpers({ showAxes: false, showShadow: false })
+    expect(stage.shadowCatcher.visible).toBe(false)
+
+    stage.dispose()
+  })
+
+  it('贴到模型地面高度；网格尺寸变化后重建而不是留着旧尺寸', () => {
+    const scene = new Scene()
+    const stage = new Stage(scene)
+    stage.setHelpers({ showAxes: false, showShadow: true })
+
+    stage.fitToBox(new Box3(new Vector3(-1, 0, -1), new Vector3(1, 2, 1)))
+    expect(stage.shadowCatcher.position.y).toBeCloseTo(0, 5)
+    const first = stage.shadowCatcher
+
+    // 网格尺寸变了会走 rebuildHelpers：接收面必须按新尺寸重建，且可见性按意图恢复
+    stage.fitToBox(new Box3(new Vector3(-100, 0, -100), new Vector3(100, 200, 100)))
+    expect(stage.shadowCatcher).not.toBe(first)
+    expect(stage.shadowCatcher.visible).toBe(true)
+    expect(stage.shadowCatcher.scale.x).toBeGreaterThan(0)
+    expect(stage.shadowCatcher.position.y).toBeCloseTo(0, 5)
+
+    stage.dispose()
+  })
+
+  it('dispose 后场景里不残留接收面', () => {
+    const scene = new Scene()
+    const stage = new Stage(scene)
+    stage.setHelpers({ showAxes: false, showShadow: true })
+    expect(scene.children.length).toBeGreaterThan(0)
+
+    stage.dispose()
+    expect(scene.children).toHaveLength(0)
+  })
+})
+
 describe('niceGridSize', () => {
   it('取整到 1/2/5 × 10^n', () => {
     expect(niceGridSize(1.5)).toBe(2)

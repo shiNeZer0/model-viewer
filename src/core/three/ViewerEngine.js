@@ -14,6 +14,7 @@ import {
   PerspectiveCamera,
   Scene,
   Sphere,
+  Vector2,
   Vector3,
   WebGLRenderer,
 } from 'three'
@@ -36,12 +37,24 @@ import { disposeObject3D } from './disposal.js'
 import { EnvironmentManager, loadEquirectangularTexture } from './environment.js'
 import { buildHierarchy } from './hierarchy.js'
 import { DEFAULT_IDLE_MS, createIdlePolicy, hasContinuousWork } from './idlePolicy.js'
-import { LightingRig, createDefaultLightingState, normalizeLightingState } from './lighting.js'
+import {
+  LightingRig,
+  createDefaultLightingState,
+  enableModelShadows,
+  normalizeLightingState,
+} from './lighting.js'
 import { LightGizmos } from './lightGizmos.js'
 import { ModelPlacement } from './modelPlacement.js'
 import { ModelOrientation } from './orientation.js'
+import {
+  DEFAULT_MAX_PIXEL_RATIO,
+  resolveAntialias,
+  resolvePixelRatioLimit,
+  resolvePostFxSamples,
+} from './perfMode.js'
 import { PostFx, normalizePostFxSettings } from './postfx.js'
 import { createRenderLoop } from './renderLoop.js'
+import { createResizeScheduler } from './resizeScheduler.js'
 import { DEFAULT_SHADE_MODE, ShadeController, hidesSolid } from './shadeModes.js'
 import {
   DEFAULT_BACKGROUND_COLOR,
@@ -61,7 +74,9 @@ export class ViewerEngine {
     if (!container) throw new Error('ViewerEngine 需要一个容器元素')
 
     this.container = container
-    this.maxPixelRatio = options.maxPixelRatio ?? 2
+    this.maxPixelRatio = options.maxPixelRatio ?? DEFAULT_MAX_PIXEL_RATIO
+    /** 低性能模式（画质档位，见 perfMode.js）：默认关 —— 它换掉默认观感，必须由用户显式选择 */
+    this.lowPerformance = Boolean(options.lowPerformance)
     this.onFps = options.onFps
     this.onContextLost = options.onContextLost
 
@@ -89,6 +104,10 @@ export class ViewerEngine {
     this.lastFrameTime = 0
     this.lastDisposal = null
     this.lastBox = null
+    /** 最近一次模型的包围球（缓存它，避免相机移动时每帧重算 Box3.setFromObject） */
+    this.lastSphere = null
+    /** 上一次写给景深通道的对焦距离，用于跳过无意义的重复写入 */
+    this.lastFocusDistance = null
     this.lastPresetId = DEFAULT_VIEW_PRESET
     this.animationPlaying = false
     /** 相机平滑过渡（视角切换用，见 cameraTween.js） */
@@ -120,6 +139,8 @@ export class ViewerEngine {
       showBoundingBox: options.showBoundingBox ?? false,
       // 光源可视化（默认关：它是调光时的辅助，不该默认出现在查看器里）
       showLightGizmos: options.showLightGizmos ?? false,
+      // 阴影（只作用于主光）。默认开：模型贴地却没有影子会显得"飘"
+      showShadow: options.showShadow ?? true,
       sourceUnit: options.sourceUnit ?? DEFAULT_SOURCE_UNIT,
       displayUnit: options.displayUnit ?? DEFAULT_DISPLAY_UNIT,
       toneMapping: postFxSettings.toneMapping,
@@ -130,13 +151,27 @@ export class ViewerEngine {
     }
 
     this.renderer = new WebGLRenderer({
-      antialias: true,
+      // antialias 是构造参数、运行时改不了，所以低性能模式必须在建引擎时就已知
+      antialias: resolveAntialias({ lowPerformance: this.lowPerformance }),
       // 透明背景模式需要 canvas 带 alpha
       alpha: true,
       powerPreference: 'high-performance',
     })
     this.canvas = this.renderer.domElement
     this.canvas.classList.add('mv-canvas')
+
+    /*
+     * 阴影：`shadowMap.enabled` 在建渲染器时就定下（它是 program cache key 的一部分，
+     * 运行时切换会让所有材质重编译），因此常开，实际是否投影由光源的 castShadow 决定。
+     *
+     * `autoUpdate = false` 是关键：默认行为是**每帧**重渲一遍 shadow map，对几十万面的
+     * 模型是笔固定开销；而查看器里只有相机在动，影子并不会变。改成只在内容真的变化时
+     * 置一次 `needsUpdate`（见 markShadowDirty 与 renderFrame）。
+     */
+    this.renderer.shadowMap.enabled = true
+    this.renderer.shadowMap.autoUpdate = false
+    /** 下一帧需要重渲阴影贴图 */
+    this.shadowNeedsUpdate = false
 
     this.scene = new Scene()
     this.camera = new PerspectiveCamera(50, 1, 0.01, 1000)
@@ -170,7 +205,7 @@ export class ViewerEngine {
     container.appendChild(cssElement)
 
     this.postFx = new PostFx(this.renderer, this.scene, this.camera, {
-      samples: 4,
+      samples: resolvePostFxSamples({ lowPerformance: this.lowPerformance }),
       toneMapping: this.display.toneMapping,
       exposure: this.display.exposure,
       saturation: this.display.saturation,
@@ -184,7 +219,11 @@ export class ViewerEngine {
       gradientTop: this.display.gradientTop,
       gradientBottom: this.display.gradientBottom,
     })
-    this.stage.setHelpers({ showGrid: this.display.showGrid, showAxes: this.display.showAxes })
+    this.stage.setHelpers({
+      showGrid: this.display.showGrid,
+      showAxes: this.display.showAxes,
+      showShadow: this.display.showShadow,
+    })
 
     // M2：边界框与尺寸标注（CSS2D 标签复用引擎里的 CSS2D 渲染层）
     this.bbox = new BoundingBoxOverlay(this.scene)
@@ -195,6 +234,13 @@ export class ViewerEngine {
 
     // M3：应用初始光照（默认影棚预设），保证首屏就有正确的打光
     this.applyLighting(this.lightingState)
+
+    /*
+     * 阴影开关必须在构造时同步一次。
+     * 只在 applyDisplaySettings 里按"与上次相比变了没有"来同步是不够的：初始值与默认值相同，
+     * 首次调用不会触发，结果就是"配置了一切却完全没有影子"（这个坑已经踩过一次）。
+     */
+    this.lightingRig.setShadowEnabled(this.display.showShadow)
 
     this.idle = createIdlePolicy({ idleMs: this.display.idleMs })
 
@@ -209,8 +255,23 @@ export class ViewerEngine {
     this.fpsSampleStart = performance.now()
     this.fpsFrameCount = 0
 
-    // 全屏切换改变的是容器尺寸而非 window，只看 window.resize 会导致画布不铺满
-    this.resizeObserver = new ResizeObserver(() => this.handleResize())
+    /** 最近一次真正应用过的「尺寸@像素比」，用于短路重复上报 */
+    this.lastResizeKey = null
+
+    /*
+     * 全屏切换改变的是容器尺寸而非 window，只看 window.resize 会导致画布不铺满。
+     *
+     * 去抖不是锦上添花：拖窗口边框时 ResizeObserver 会连续触发，每个事件都会走到
+     * postFx.setSize，而 EffectComposer 的 render target 一旦尺寸变化就会 dispose 并
+     * 重新分配 GPU 纹理（4K + 4×MSAA 下这一下很贵）。交给 resizeScheduler 合并成
+     * 「每帧最多一次」，拖动过程按最终尺寸重建，不再逐事件重建。
+     */
+    this.resizeScheduler = createResizeScheduler({
+      requestFrame: (callback) => requestAnimationFrame(callback),
+      cancelFrame: (handle) => cancelAnimationFrame(handle),
+      onResize: () => this.handleResize(),
+    })
+    this.resizeObserver = new ResizeObserver(() => this.resizeScheduler.schedule())
     this.resizeObserver.observe(container)
     this.handleResize()
 
@@ -290,11 +351,40 @@ export class ViewerEngine {
       cameraMoving,
     })
 
+    // 相机一动，景深的对焦距离就变了（内部有阈值去抖，不会每帧都改写 uniform）
+    if (controlsChanged || cameraMoving) this.syncCameraDistance()
+
     if (!controlsChanged && !continuous && !this.idle.shouldRender(now)) return
 
     this.renderFrame()
     // 继续排帧；若期间进入空闲，下一帧的决策会再次把它停掉
     this.loop.start()
+  }
+
+  /* --------------------------- 后处理通道 --------------------------- */
+
+  /**
+   * 设置某个后处理通道的开关与参数（UI → 引擎的唯一入口）。
+   *
+   * 低性能模式在这里**压制**「重」通道：UI 的开关仍照常保存，但实际渲染关闭 ——
+   * 这样退出低性能模式后用户的设置自然恢复，不需要再维护一份"被压制的意图"。
+   */
+  setPostFxChannel(id, { enabled, settings } = {}) {
+    const state = this.postFx.channels.get(id)
+    if (!state) return false
+
+    if (settings) this.postFx.setChannelSettings(id, settings)
+    if (enabled !== undefined) {
+      const suppressed = this.lowPerformance && state.definition.heavy
+      this.postFx.setChannelEnabled(id, suppressed ? false : enabled)
+    }
+    this.noteActivity()
+    return true
+  }
+
+  /** 通道当前状态（UI 回显与排障用） */
+  getPostFxChannels() {
+    return this.postFx.describeChannels()
   }
 
   /* --------------------------- 相机平滑过渡 --------------------------- */
@@ -416,6 +506,9 @@ export class ViewerEngine {
     if (!this.animation) return null
     const state = this.animation.update(this.animation.playing ? delta : 0)
 
+    // 骨骼动画会改变模型形状 → 阴影必须跟着更新（只有播放期间有这份开销）
+    if (this.animation.playing) this.markShadowDirty()
+
     const now = performance.now()
     const discreteChanged =
       state.playing !== this.animationState?.playing ||
@@ -452,9 +545,56 @@ export class ViewerEngine {
    * 抛在 rAF 回调里的异常不会冒泡到任何 UI，现象就是「画布全黑但界面一切正常」，
    * 极难排查。这里捕获后自动降级并把原因交给 UI 展示。
    */
+  /** 标记「下一帧需要重渲阴影贴图」。只在内容真的变了时调（相机移动不需要） */
+  markShadowDirty() {
+    this.shadowNeedsUpdate = true
+  }
+
+  /**
+   * 把「当前模型多大、相机离它多远」同步给依赖世界尺度的通道。
+   *
+   * GTAO 的遮蔽半径、景深的对焦距离都是**世界单位**：同一个 0.5 对 1cm 的零件和 100m 的
+   * 建筑完全不是一回事。写死会让这些效果"换个模型就失效"，所以模型一变就重算。
+   */
+  syncSceneScale(box = this.lastBox) {
+    if (!box || box.isEmpty?.()) {
+      this.lastSphere = null
+      return
+    }
+    this.lastSphere = box.getBoundingSphere(new Sphere())
+    this.postFx.setChannelSettings('gtao', {
+      sceneRadius: Math.max(this.lastSphere.radius, 1e-3),
+    })
+    this.lastFocusDistance = null
+    this.syncCameraDistance()
+  }
+
+  /** 相机移动后更新景深对焦距离（带阈值，静止时完全不写） */
+  syncCameraDistance() {
+    const sphere = this.lastSphere
+    if (!sphere) return false
+
+    const distance = Math.max(this.camera.position.distanceTo(sphere.center), 1e-3)
+    // 变化极小就不写：拖滑杆/轨道操作时每帧都改 uniform 纯属浪费
+    if (this.lastFocusDistance !== null && Math.abs(distance - this.lastFocusDistance) < 1e-4) {
+      return false
+    }
+    this.lastFocusDistance = distance
+    this.postFx.setChannelSettings('dof', { focusDistance: distance })
+    return true
+  }
+
   renderFrame() {
     if (this.disposed) return
     try {
+      /*
+       * autoUpdate 关掉后，three 只在 needsUpdate 为 true 的那一帧重渲 shadow map，
+       * 渲完自动置回 false。所以这里只负责把"内容变了"的标记翻译成一次重渲。
+       */
+      if (this.shadowNeedsUpdate) {
+        this.renderer.shadowMap.needsUpdate = true
+        this.shadowNeedsUpdate = false
+      }
       this.postFx.render()
       this.cssRenderer.render(this.scene, this.camera)
       this.renderedFrames += 1
@@ -509,7 +649,7 @@ export class ViewerEngine {
 
     const width = Math.max(this.container.clientWidth, 1)
     const height = Math.max(this.container.clientHeight, 1)
-    const baseRatio = Math.min(window.devicePixelRatio || 1, this.maxPixelRatio)
+    const baseRatio = Math.min(window.devicePixelRatio || 1, this.pixelRatioLimit)
     const exportRatio = resolveExportRatio({ baseRatio, scale, width, height })
 
     try {
@@ -552,7 +692,15 @@ export class ViewerEngine {
     if (this.disposed) return
     const width = Math.max(this.container.clientWidth, 1)
     const height = Math.max(this.container.clientHeight, 1)
-    const pixelRatio = Math.min(window.devicePixelRatio || 1, this.maxPixelRatio)
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, this.pixelRatioLimit)
+
+    // 尺寸与像素比都没变时直接返回：ResizeObserver 会对同一尺寸重复上报
+    const resizeKey = `${width}x${height}@${pixelRatio}`
+    if (resizeKey === this.lastResizeKey) {
+      this.noteActivity()
+      return
+    }
+    this.lastResizeKey = resizeKey
 
     this.camera.aspect = width / height
     this.camera.updateProjectionMatrix()
@@ -569,6 +717,39 @@ export class ViewerEngine {
   setMaxPixelRatio(maxPixelRatio) {
     if (Number.isFinite(maxPixelRatio) && maxPixelRatio > 0) this.maxPixelRatio = maxPixelRatio
     this.handleResize()
+  }
+
+  /** 当前**生效**的像素比上限（低性能模式下恒为 1，与用户设置无关，见 perfMode.js） */
+  get pixelRatioLimit() {
+    return resolvePixelRatioLimit({
+      lowPerformance: this.lowPerformance,
+      maxPixelRatio: this.maxPixelRatio,
+    })
+  }
+
+  /**
+   * 切换低性能模式：像素比降到 1 + 关掉 MSAA。
+   *
+   * 一个必须说清楚的边界：`antialias` 是 WebGLRenderer 的构造参数，运行时改不了，
+   * 它已在建引擎时按当时的档位定下 —— 所以切换后**直渲路径的抗锯齿要到下次创建引擎
+   * 才完全生效**，像素比与 MSAA 两项是立即生效的。
+   * @returns {boolean} 档位是否真的发生了变化（未变化时不白重建一遍后处理缓冲）
+   */
+  setLowPerformance(enabled) {
+    const next = Boolean(enabled)
+    if (next === this.lowPerformance) return false
+    this.lowPerformance = next
+
+    /*
+     * 关掉所有「重」通道（环境光遮蔽 / 泛光 / 景深）：它们各自要跑好几趟全屏，与这个档位的
+     * 目的直接冲突。轻量通道（描边 / 调色 / 饱和度）不受影响 —— 没理由为了省性能就牺牲它们。
+     */
+    this.postFx.setHeavyChannelsEnabled(!next)
+    this.postFx.setSamples(resolvePostFxSamples({ lowPerformance: next }))
+    // 像素比是 resizeKey 的一部分，handleResize 会因此重算并重建后处理缓冲
+    this.handleResize()
+    console.info(`[ViewerEngine] 低性能模式：${next ? '开（像素比降到 1、关闭 MSAA）' : '关'}`)
+    return true
   }
 
   setAutoRotate(enabled, speed) {
@@ -630,7 +811,21 @@ export class ViewerEngine {
       gradientBottom: this.display.gradientBottom,
     })
     this.container.classList.toggle('mv-transparent-stage', this.display.background === 'transparent')
-    this.stage.setHelpers({ showGrid: this.display.showGrid, showAxes: this.display.showAxes })
+    /*
+     * 阴影：光源侧的 castShadow 与地面接收面必须一起切 ——
+     * 只切一个会出现"有接收面但没影子"或"有影子但没东西接"的怪异组合。
+     *
+     * 这里**每次同步**（幂等）而不是只在"变了"的时候同步：一旦依赖 previous，
+     * 就得同时保证构造时的初始值也与设置一致，否则又会回到"完全没有影子"那个坑。
+     * 重渲标记仍然只在真的变化时打。
+     */
+    this.lightingRig.setShadowEnabled(this.display.showShadow)
+    if (this.display.showShadow !== previous.showShadow) this.markShadowDirty()
+    this.stage.setHelpers({
+      showGrid: this.display.showGrid,
+      showAxes: this.display.showAxes,
+      showShadow: this.display.showShadow,
+    })
     // 光源可视化开关（只在变化时动作，避免每帧重设）
     if (this.display.showLightGizmos !== previous.showLightGizmos) {
       this.lightGizmos.setVisible(this.display.showLightGizmos)
@@ -666,6 +861,9 @@ export class ViewerEngine {
     if (this.display.background === 'environment') {
       this.stage.setBackground({ mode: 'environment' })
     }
+
+    // 光源方位/强度变了 → 阴影方向与深浅都变了，必须重渲（拖滑杆时每次变更一次，必要开销）
+    this.markShadowDirty()
 
     this.noteActivity()
     return this.lightingState
@@ -786,6 +984,13 @@ export class ViewerEngine {
     // 换模型时旧的补间终点已经失效：不取消的话相机会继续飞向"上一个模型"的视角
     this.cancelCameraTween()
 
+    // 旧的选中对象已随上一个模型释放，描边必须清空（否则会描到一个已销毁的对象上）
+    const outlinePass = this.postFx.getChannelPass('outline')
+    if (outlinePass) {
+      outlinePass.selectedObjects = []
+      this.postFx.refreshChannel('outline')
+    }
+
     let disposal = null
     if (this.currentRoot) {
       this.scene.remove(this.currentRoot)
@@ -816,6 +1021,11 @@ export class ViewerEngine {
       this.orientation = new ModelOrientation(this.currentRoot)
       this.orientation.apply({ upAxis: this.display.upAxis, formatId })
       this.placement = new ModelPlacement(this.currentRoot)
+      /*
+       * 模型自己必须投影与接收阴影：three 里每个 Mesh 的 castShadow 默认是 false，
+       * 只配光源是不会有影子的（详见 enableModelShadows 的说明）。
+       */
+      enableModelShadows(this.currentRoot)
       this.shadeController = new ShadeController(this.currentRoot)
       this.originalVisibility = captureVisibility(this.currentRoot)
       this.visibilityOverrides = new Map()
@@ -846,9 +1056,15 @@ export class ViewerEngine {
         }) ?? new Box3().setFromObject(this.currentRoot)
       this.stage.fitToBox(this.lastBox)
       this.refreshBoundsOverlay()
+      // 阴影相机与"世界尺度相关"的通道（AO 半径、景深对焦）都要跟着模型尺寸走
+      this.lightingRig.fitShadowCamera(this.lastBox)
+      this.syncSceneScale(this.lastBox)
+      this.markShadowDirty()
       if (fit) fitResult = this.fitToObject(this.currentRoot, { presetId, box: this.lastBox })
     } else {
       this.lastBox = null
+      this.lastSphere = null
+      this.lastFocusDistance = null
       // 没有模型就没有"适配位姿"：清掉它，入场动画自然不会误播（playEntranceAnimation 也会判 currentRoot）
       this.lastCameraDestination = null
       this.placement = null
@@ -943,6 +1159,9 @@ export class ViewerEngine {
     this.lastBox = box
     this.stage.fitToBox(box)
     this.refreshBoundsOverlay()
+    this.lightingRig.fitShadowCamera(box)
+    this.syncSceneScale(box)
+    this.markShadowDirty()
     this.fitToObject(this.currentRoot, { presetId: this.lastPresetId, box })
     return box
   }
@@ -957,7 +1176,11 @@ export class ViewerEngine {
       originals: this.originalVisibility,
       hideSolids: hidesSolid(this.display.shadingMode),
     })
-    if (changed) this.noteActivity()
+    if (changed) {
+      // 有节点被隐藏或显示，阴影内容随之变化
+      this.markShadowDirty()
+      this.noteActivity()
+    }
     return changed
   }
 
@@ -979,6 +1202,22 @@ export class ViewerEngine {
       count: this.hierarchy.count,
       truncated: this.hierarchy.truncated,
     }
+  }
+
+  /**
+   * 设置「选中节点」（层级树选中/聚焦时调用），并把它交给描边通道。
+   * 没有选中任何东西时描边通道会自报恒等，管线直接跳过那一趟（它每帧要渲染两遍）。
+   * @returns {boolean} 是否真的选中了一个节点
+   */
+  setSelectedNode(nodeId) {
+    const node = nodeId ? this.hierarchy.nodeById.get(nodeId) ?? null : null
+    const pass = this.postFx.getChannelPass('outline')
+    if (pass) {
+      pass.selectedObjects = node ? [node] : []
+      this.postFx.refreshChannel('outline')
+    }
+    this.noteActivity()
+    return Boolean(node)
   }
 
   /** 手动显示/隐藏某个节点（记入 overrides，不会被模式切换覆盖） */
@@ -1057,6 +1296,72 @@ export class ViewerEngine {
     }
   }
 
+  /**
+   * 性能快照：把「影响帧率的所有旋钮」与「当前实际开销」收成一个可复制的对象。
+   *
+   * 为什么需要它：本项目的帧率基准只能在真机上看（无头环境测不出有意义的数字），
+   * 没有可比对的数据就无法证明任何优化有效，也无法防止回退。这里把散落在
+   * renderer.info / postFx / 显示设置里的数值集中到一处，交给 formatPerfSnapshot
+   * 输出成可粘贴的文本，让前后两次测量能逐行对比。
+   */
+  getPerfSnapshot() {
+    const devicePixelRatio = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1
+    let drawingBuffer = { width: 0, height: 0 }
+    let gpu = '未知'
+    let webglVersion = '未知'
+
+    try {
+      const size = this.renderer.getDrawingBufferSize(new Vector2())
+      drawingBuffer = { width: size.x, height: size.y }
+      const context = this.renderer.getContext()
+      const debugInfo = context.getExtension('WEBGL_debug_renderer_info')
+      gpu = debugInfo ? context.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : '未知'
+      webglVersion = this.renderer.capabilities.isWebGL2 ? 'WebGL2' : 'WebGL1'
+    } catch (error) {
+      // 上下文已丢失时读这些会抛错：快照本身不该成为新的故障点
+      console.warn('[ViewerEngine] 读取渲染器信息失败，快照将缺少部分字段', error)
+    }
+
+    const info = this.renderer.info
+    return {
+      at: new Date().toISOString(),
+      fps: this.fps,
+      renderedFrames: this.renderedFrames,
+      running: this.isRunning,
+      devicePixelRatio,
+      maxPixelRatio: this.maxPixelRatio,
+      /** 实际生效的像素比上限：低性能模式下恒为 1，与 maxPixelRatio 可能不同 */
+      pixelRatioLimit: this.pixelRatioLimit,
+      lowPerformance: this.lowPerformance,
+      drawingBuffer,
+      postFx: this.postFx.describe(),
+      render: {
+        triangles: info.render.triangles,
+        calls: info.render.calls,
+        geometries: info.memory.geometries,
+        textures: info.memory.textures,
+      },
+      lighting: {
+        // 按"实际在发光"统计：关闭的灯靠强度归零表达，visible 恒为 true（见 lighting.js）
+        directional: [...this.lightingRig.lights.values()].filter((light) => light.intensity > 0)
+          .length,
+        hemisphere: this.lightingRig.hemisphere.intensity > 0,
+      },
+      shadow: {
+        enabled: this.display.showShadow,
+        // autoUpdate 为 false 时靠脏标记触发重渲；回显它能确认"不每帧重算"的策略真的生效
+        autoUpdate: this.renderer.shadowMap.autoUpdate,
+        // 排障用：这两项都为 true 才可能出现影子（曾经因为光源侧没开而"完全没有影子"）
+        lightCasts: this.lightingRig.lights.get('key')?.castShadow ?? false,
+        catcher: Boolean(this.stage.shadowCatcher?.visible),
+      },
+      idleMs: this.idle.idleMs,
+      gpu,
+      webglVersion,
+      renderError: this.renderError,
+    }
+  }
+
   dispose() {
     if (this.disposed) return
     this.disposed = true
@@ -1064,6 +1369,8 @@ export class ViewerEngine {
     // 直接 cancel 而不是 cancelCameraTween()：后者会 noteActivity 重新排帧，在销毁路径上是错的
     this.cameraTween.cancel()
     this.resizeObserver.disconnect()
+    // 待处理的 resize 帧要撤掉：回调里会访问已释放的 renderer
+    this.resizeScheduler.cancel()
     this.canvas.removeEventListener('webglcontextlost', this.contextLostHandler)
     for (const eventName of this.activityEvents) {
       this.canvas.removeEventListener(eventName, this.activityHandler)

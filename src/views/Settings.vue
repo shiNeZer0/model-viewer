@@ -95,6 +95,15 @@
               @update:model-value="settings.setMaxPixelRatio"
             />
           </el-form-item>
+          <el-form-item label="低性能模式">
+            <el-switch
+              :model-value="settings.lowPerformance"
+              @update:model-value="settings.setLowPerformance"
+            />
+            <span class="settings__inline-hint">
+              像素比固定为 1、关闭 MSAA；软件渲染 / 集显 / 超大模型时开启
+            </span>
+          </el-form-item>
           <el-form-item label="默认开启转盘">
             <el-switch
               :model-value="settings.autoRotate"
@@ -124,6 +133,8 @@
         </el-form>
         <p class="settings__hint">
           高分屏上把像素比降到 1.0 能显著提升大模型帧率；此值会在下一次渲染时生效。
+          开启「低性能模式」后像素比固定为 1.0（忽略上面的设置）并关闭 MSAA，这两项立即生效；
+          抗锯齿的彻底关闭需要重建渲染引擎，切换页面或重开应用后完全生效。
         </p>
       </el-card>
 

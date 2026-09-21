@@ -17,6 +17,7 @@ const SETTING_KEYS = {
   autoRotateSpeed: 'viewer.autoRotateSpeed',
   grantMode: 'security.grantMode',
   maxPixelRatio: 'perf.maxPixelRatio',
+  lowPerformance: 'perf.lowPerformance',
 }
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -25,6 +26,11 @@ export const useSettingsStore = defineStore('settings', () => {
   /** file | parent | parent-recursive（后端校验，非法值会报错） */
   const grantMode = ref('parent-recursive')
   const maxPixelRatio = ref(2)
+  /**
+   * 低性能模式：像素比降到 1 + 关闭 MSAA（见 core/three/perfMode.js）。
+   * 默认关 —— 它换掉的是默认观感，必须由用户显式选择。
+   */
+  const lowPerformance = ref(false)
 
   const loaded = ref(false)
   const loadError = ref('')
@@ -43,6 +49,9 @@ export const useSettingsStore = defineStore('settings', () => {
       }
       if (typeof saved[SETTING_KEYS.maxPixelRatio] === 'number') {
         maxPixelRatio.value = saved[SETTING_KEYS.maxPixelRatio]
+      }
+      if (typeof saved[SETTING_KEYS.lowPerformance] === 'boolean') {
+        lowPerformance.value = saved[SETTING_KEYS.lowPerformance]
       }
       loadError.value = ''
     } catch (error) {
@@ -85,12 +94,18 @@ export const useSettingsStore = defineStore('settings', () => {
     await persist('maxPixelRatio', value)
   }
 
+  async function setLowPerformance(value) {
+    lowPerformance.value = Boolean(value)
+    await persist('lowPerformance', lowPerformance.value)
+  }
+
   return {
     SETTING_KEYS,
     autoRotate,
     autoRotateSpeed,
     grantMode,
     maxPixelRatio,
+    lowPerformance,
     loaded,
     loadError,
     load,
@@ -98,5 +113,6 @@ export const useSettingsStore = defineStore('settings', () => {
     setAutoRotateSpeed,
     setGrantMode,
     setMaxPixelRatio,
+    setLowPerformance,
   }
 })

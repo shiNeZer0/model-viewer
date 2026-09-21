@@ -5,6 +5,7 @@
 
 import { onBeforeUnmount, shallowRef } from 'vue'
 
+import { disposeGltfDecoders } from '../core/three/ModelLoader.js'
 import { ViewerEngine } from '../core/three/ViewerEngine.js'
 
 export function useViewerEngine() {
@@ -21,6 +22,11 @@ export function useViewerEngine() {
       engine.value.dispose()
       engine.value = null
     }
+    /*
+     * 共享解码器是模块级缓存，它的 worker 池不会随引擎销毁自动回收。
+     * 不在这里释放的话，组件重建（热更新）会一批批地留下 worker。
+     */
+    disposeGltfDecoders()
   }
 
   onBeforeUnmount(unmount)

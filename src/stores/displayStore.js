@@ -36,6 +36,7 @@ const SETTING_KEYS = {
   gradientBottom: 'display.gradientBottom',
   showGrid: 'display.showGrid',
   showAxes: 'display.showAxes',
+  showShadow: 'display.showShadow',
   centerModel: 'display.centerModel',
   alignToGround: 'display.alignToGround',
   showBoundingBox: 'display.showBoundingBox',
@@ -64,6 +65,8 @@ export const useDisplayStore = defineStore('display', () => {
   const gradientBottom = ref(DEFAULT_GRADIENT_BOTTOM)
   const showGrid = ref(false)
   const showAxes = ref(true)
+  /** 阴影（只作用于主光）：默认开 —— 模型贴地却没有影子会显得"飘" */
+  const showShadow = ref(true)
   /** 模型摆放：加载后居中到世界原点（X/Z） */
   const centerModel = ref(true)
   /** 模型摆放：底部对齐地面（y=0） */
@@ -100,6 +103,7 @@ export const useDisplayStore = defineStore('display', () => {
     gradientBottom: gradientBottom.value,
     showGrid: showGrid.value,
     showAxes: showAxes.value,
+    showShadow: showShadow.value,
     centerModel: centerModel.value,
     alignToGround: alignToGround.value,
     upAxis: upAxis.value,
@@ -149,6 +153,9 @@ export const useDisplayStore = defineStore('display', () => {
       }
       if (typeof saved[SETTING_KEYS.showAxes] === 'boolean') {
         showAxes.value = saved[SETTING_KEYS.showAxes]
+      }
+      if (typeof saved[SETTING_KEYS.showShadow] === 'boolean') {
+        showShadow.value = saved[SETTING_KEYS.showShadow]
       }
       if (typeof saved[SETTING_KEYS.centerModel] === 'boolean') {
         centerModel.value = saved[SETTING_KEYS.centerModel]
@@ -236,6 +243,9 @@ export const useDisplayStore = defineStore('display', () => {
       case 'showAxes':
         showAxes.value = Boolean(value)
         break
+      case 'showShadow':
+        showShadow.value = Boolean(value)
+        break
       case 'centerModel':
         centerModel.value = Boolean(value)
         break
@@ -294,6 +304,7 @@ export const useDisplayStore = defineStore('display', () => {
     gradientBottom.value = DEFAULT_GRADIENT_BOTTOM
     showGrid.value = false
     showAxes.value = true
+    showShadow.value = true
     centerModel.value = true
     alignToGround.value = true
     upAxis.value = DEFAULT_UP_AXIS
@@ -317,6 +328,7 @@ export const useDisplayStore = defineStore('display', () => {
     gradientBottom,
     showGrid,
     showAxes,
+    showShadow,
     centerModel,
     alignToGround,
     upAxis,

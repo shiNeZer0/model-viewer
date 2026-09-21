@@ -71,6 +71,14 @@
         />
         <span class="display-panel__hint">网格尺寸会随模型大小自动缩放</span>
       </el-form-item>
+
+      <el-form-item label="阴影">
+        <el-switch
+          :model-value="display.showShadow"
+          @update:model-value="display.update('showShadow', $event)"
+        />
+        <span class="display-panel__hint">只由主光投影；静态场景下不重复计算</span>
+      </el-form-item>
     </el-form>
 
     <el-divider content-position="left">模型放置与轴向</el-divider>
@@ -168,6 +176,42 @@
       </el-form-item>
     </el-form>
 
+    <el-divider content-position="left">后处理效果</el-divider>
+
+    <p class="display-panel__footnote">
+      「重」效果（环境光遮蔽 / 泛光 / 景深）在低性能模式下会被自动关闭。
+    </p>
+
+    <div v-for="channel in effectChannels" :key="channel.id" class="display-panel__channel">
+      <div class="display-panel__channel-head">
+        <el-switch
+          :model-value="postfx.channelStates[channel.id].enabled"
+          @update:model-value="postfx.setEnabled(channel.id, $event)"
+        />
+        <span class="display-panel__channel-title">{{ channel.label }}</span>
+        <el-tag v-if="channel.heavy && settings.lowPerformance" size="small" type="warning">
+          低性能模式已关闭
+        </el-tag>
+        <el-button link size="small" @click="postfx.resetChannelSettings(channel.id)">
+          重置
+        </el-button>
+      </div>
+
+      <el-form label-width="76px" label-position="left" size="small">
+        <el-form-item v-for="(range, key) in channel.ranges" :key="key" :label="settingLabel(key)">
+          <el-slider
+            :model-value="postfx.channelStates[channel.id].settings[key]"
+            :min="range.min"
+            :max="range.max"
+            :step="range.step"
+            :format-tooltip="(value) => value.toFixed(2)"
+            @input="postfx.setSetting(channel.id, key, $event, { persist: false })"
+            @change="postfx.setSetting(channel.id, key, $event)"
+          />
+        </el-form-item>
+      </el-form>
+    </div>
+
     <el-button size="small" @click="resetDisplay">恢复默认显示设置</el-button>
   </div>
 </template>
@@ -175,6 +219,7 @@
 <script setup>
 import { UP_AXIS_MODES } from '../../core/three/orientation.js'
 import {
+  DEFAULT_CHANNELS,
   EXPOSURE_RANGE,
   SATURATION_RANGE,
   TONE_MAPPINGS,
@@ -182,8 +227,38 @@ import {
 import { SHADE_MODES } from '../../core/three/shadeModes.js'
 import { BACKGROUND_MODES } from '../../core/three/stage.js'
 import { useDisplayStore } from '../../stores/displayStore.js'
+import { usePostFxStore } from '../../stores/postfxStore.js'
+import { useSettingsStore } from '../../stores/settingsStore.js'
 
 const display = useDisplayStore()
+const postfx = usePostFxStore()
+const settings = useSettingsStore()
+
+/**
+ * 效果通道列表：**排除饱和度** —— 它在上面的「后处理与色调」区已有专门滑杆，
+ * 且唯一事实源是 displayStore；列在这里会出现两个改同一件事的控件。
+ */
+const effectChannels = DEFAULT_CHANNELS.filter((item) => item.id !== 'saturation')
+
+/** 参数键 → 中文标签（键名由各通道自己定义，集中映射一次） */
+const SETTING_LABELS = {
+  edgeStrength: '描边强度',
+  edgeThickness: '描边粗细',
+  edgeGlow: '描边辉光',
+  radius: '遮蔽半径',
+  intensity: '强度',
+  strength: '强度',
+  threshold: '亮度阈值',
+  focusRatio: '对焦位置',
+  aperture: '光圈',
+  maxblur: '虚化程度',
+  temperature: '色温',
+  vignette: '暗角',
+}
+
+function settingLabel(key) {
+  return SETTING_LABELS[key] ?? key
+}
 
 /** 恢复默认并落库（逐个写回，避免只改内存） */
 async function resetDisplay() {
@@ -219,5 +294,23 @@ async function resetDisplay() {
   font-size: 12px;
   line-height: 1.6;
   color: var(--el-text-color-secondary);
+}
+
+.display-panel__channel {
+  padding: 8px 0;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.display-panel__channel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.display-panel__channel-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
 }
 </style>

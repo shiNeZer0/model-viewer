@@ -158,6 +158,58 @@
 【顺带修正】设置页「关于」卡片过期信息（原写"0.1.0（M1 里程碑）"并把已完成的格式/光照/动画列为"计划中"），已更新为当前真实能力清单。
 
 【待办】设计文档 §21 与 README **尚未**补明暗主题一节（本轮优先保证代码与测试闭环）；下次继续时补齐，或与 M6 章节一并写。
+- [2026-09-17 14:13] [工作记录] 修复 pnpm tauri dev 启动 panic：删除 sql preload 的 ~ 路径（已推送 0263b00） — model-viewer 启动崩溃已修复并推送（commit 0263b00，清理误入库文件 7359910）。
+
+【做了什么】删掉 `src-tauri/tauri.conf.json` 里的 `plugins.sql.preload`（内容是 `sqlite:~/.model-viewer/app/app.db`）—— 该 `~` 会触发 SQL 插件社区 fork 的 `expand_tilde()`，其中 `env::var("HOME").expect(...)` 在 Windows（无 HOME）上启动即 panic（exit 101）。原因是用户报 "pnpm tauri dev 报错 HOME 环境变量不存在: NotPresent"。详见经验教训 3c567b7a6f86（含依赖源码证据与替代方案核对）。
+
+【安全性论证（已核对依赖源码，不是猜）】建库由插件 `DbPool::connect` 的 `create_database` 负责；迁移按 URL 字符串注册、由前端 `Database.load`（绝对路径，与 Rust `add_migrations` 的键一致）命中执行。因此删 preload 不影响建库与迁移。
+
+【护栏】`paths.rs` 新增单测 `配置里不应出现波浪号数据库路径`（`include_str!("../tauri.conf.json")` + 断言无 `~`），任何人把 `sqlite:~...` 加回来会立刻失败。
+
+【验证】cargo 48/48；`cargo build` 后在没有 HOME 的环境直接启动 `target/debug/model-viewer.exe`，进程存活 10s 无 panic（修复前该阶段即退出）；vitest 381/381。
+
+【下一步（用户侧）】重新执行 `pnpm tauri dev`，确认窗口正常起来并检查设置/最近文件能读写（这条同时验证迁移仍生效）。真机验收清单见记忆 670bf3b062fd（M6 收尾交接）的最后一节。
+- [2026-09-21 17:45] [工作记录] 渲染/加载性能优化四阶段落地（未提交）：性能快照、resize 去抖、恒等 pass 跳过、光照免重编译、解码器复用、低性能模式 — model-viewer 本轮性能优化（用户选定“渲染/加载性能”方向，四个阶段全做；**尚未 git commit**）。
+
+【改动清单（15 改 + 6 新增）】
+- 新增 `core/three/resizeScheduler.js`(+test)：resize 合并到每帧一次，仿 renderLoop.js 的“句柄先清空再回调”不变式。
+- 新增 `core/three/perfMode.js`(+test)：低性能模式的纯逻辑（像素比上限、MSAA 采样、antialias 决策）。
+- 新增 `utils/perf-snapshot.js`(+test)：性能快照文本化纯函数。
+- `postfx.js`：saturation===1 时 `saturationPass.enabled=false`；`applySize` 不再重复调 `composer.setPixelRatio`（它内部已调 setSize）；新增 `setSamples()`（改 samples 必须丢 composer）与 `describe()`；导出 `DEFAULT_POSTFX_SAMPLES`。
+- `ViewerEngine.js`：`getPerfSnapshot()`、`pixelRatioLimit` getter、`setLowPerformance()`、resize 短路（尺寸@像素比）、低性能模式读进构造参数（antialias/samples）。
+- `lighting.js`：关闭光源改用 `intensity=0`（`visible` 恒 true），`enabledCount` 判据改为 `intensity>0`。
+- `ModelLoader.js`：解码器模块级共享（`getGltfDecoders`/`disposeGltfDecoders`），loadGltf 不再 finally dispose。
+- `useViewerEngine.js`：unmount 时 `disposeGltfDecoders()`。
+- `settingsStore.js`：新增 `perf.lowPerformance`（默认 false）。
+- `InfoHud.vue`/`Viewer.vue`：HUD 加“复制性能快照”按钮（剪贴板失败回退 console）。
+- `Settings.vue`/`ModelCanvas.vue`：低性能模式开关 + 接线。
+- 顺手修掉 `ModelCanvas.vue` 里重复注册两次的 `watch(() => model.root, syncInspection)`。
+- `docs/设计文档.md`：新增 §36（诊断表含源码行号、交付、决策、自我纠正、验证、待真机确认），并更新 §29.1/§29.4 的性能快照出口与采集方法。
+
+【验证】vitest 463/463（41 文件，基线 434/38）；diagnose-sfc 15/15；`pnpm build` 成功（3.88s）。未跑 cargo test（零 Rust 改动）。
+
+【仍未做】① git commit；② 真机基准数字（§29.4 仍为空）；③ 视觉等价性肉眼确认。
+- [2026-09-21 18:05] [工作记录] 阴影 + 五个后处理通道落地（未提交）：PostFx 改为可插拔通道架构，含 GTAO/描边/泛光/景深/调色 — model-viewer 本轮新增"阴影 + 后处理效果"（承接 §36 性能优化；**尚未 git commit**）。
+
+【第一步是重构，不是加效果】PostFx 从硬编码三段式改成**可插拔通道**：
+- 通道定义在 `src/core/three/postfx/*.js`，字段：`id / label / order / defaultEnabled / defaultSettings / ranges / heavy` + `create / update / isIdentity / describe / dispose`。
+- 组装：按 order 升序插在 RenderPass 之后，OutputPass 固定最后。
+- **所有通道在 composer 创建时一次性建好，之后只切 `pass.enabled`** —— 开关效果不重建 render target。
+- `isIdentity(settings, pass)` 把 §36 的"恒等跳过"通用化（AO 强度 0、泛光 0、调色全默认、描边无选中都自动跳过）。
+- `saturation` 拆到 `postfx/saturation.js`；`postfx.js` 保留全部原有导出，**重构后 463 个既有用例零改动全绿**。
+
+【五个通道】outline(10,默认开)/gtao(20,默认开,heavy)/bloom(30,**默认关**,heavy)/dof(40,**默认关**,heavy)/grade(80,默认开)/saturation(90,默认开)。
+- 泛光与景深默认**关**：用户授权"效果优先可默认开"，但这两个会主动糊掉/模糊模型，与查看器定位冲突，故默认关（随时可开，已在文档与汇报中明说）。
+- 没做 LUT：与"饱和度 + 5 种色调映射"重叠，且需要 3D 查找表资源；改用分级 shader 做色温+暗角。**刻意不做对比度**（那是显示空间操作，放 OutputPass 之前会变成"曝光式"结果）。
+- 世界尺度参数由引擎写入：gtao 的 `sceneRadius`、dof 的 `focusDistance`（相机移动时更新，带阈值去抖）。
+
+【阴影（诊断发现项目原本零阴影）】`lighting.js` 只让主光 castShadow；`stage.js` 加 ShadowMaterial 接收面（只显示阴影、自身透明）；`fitShadowCamera(box)` 按包围盒重算正交范围且**不动 light.target**（改靶心=悄悄改打光）。**关键：`shadowMap.autoUpdate = false` + 脏标记**，只在模型/可见性/摆放/轴向/光源/动画帧变化时重渲 —— 相机移动不影响影子，所以静态查看零 shadow map 开销。
+
+【配套】`postfxStore.js`（单个 JSON 键 `postfx.channels`，默认值只从通道定义取；持久化只保留 `ranges` 里的键，天然排除引擎写入的运行时字段）；低性能模式 `setHeavyChannelsEnabled` 压制 heavy 通道但保留 UI 开关；`displayStore.showShadow`（默认开）；DisplayPanel 动态渲染通道开关与滑杆；Viewer.vue 的 onSelectNode/onFocusNode 调 `engine.setSelectedNode`；性能快照加"效果通道"行。
+
+【验证】vitest **495/495（42 文件，基线 463/41）**；diagnose-sfc 15/15；`pnpm build` 成功。新增 `postfxStore.test.js`；`postfx.test.js` 12→26（含**内置通道冒烟测试**：用真实 Scene+PerspectiveCamera 逐个 create/setSize/dispose）。
+
+【仍待】① git commit；② **真机验证五个通道的实际画面与兼容性**（Node 测不了 GPU；尤其要确认 AO/泛光在半透明背景与"仅线框"下是否异常）；③ 用 §29.4 基准测 GTAO 默认开带来的开销 —— 这是"效果优先"的代价，必须用数字说话。
 
 ## 经验教训 Lessons Learned
 
@@ -272,6 +324,194 @@
 3) 测试盲区：我此前的用例只断言了"停止后 time==0 且 playing==false"（**只查时间不查姿势**），所以这两处都被漏过；而"切换片段后播放"的路径之所以正常，是因为 selectClip 里调了 `action.play()`。补的回归用例同时断言**位置数值**（播到 0.6s 时 x≈6 → 停止后 x≈0 → 再播放 0.5s 后 x≈5），这类"数值 + 状态"双重断言才拦得住。
 
 **适用范围**：直接操作 three 的 AnimationAction 时都适用；用 `mixer.clipAction()` 得到的 action 一旦被 stop/disable，就必须重新 play 才会重新被更新。
+- [2026-09-17 11:11] [经验教训] MTLLoader 会把绝对贴图路径拼在 baseUrl 后面，setURLModifier 收到的是拼接后的串 — model-viewer M6-3 实测（three r185）：想让 MTL 里 `map_Kd C:\tex\a.png` / `file:///E:/a.png` 这类绝对本地路径生效，光给 LoadingManager.setURLModifier + convertFileSrc 转换器是**不够**的。
+
+【根因】MTLLoader 自带的 resolveURL 只把 `http(s)://` 当绝对地址（源码里就一句 `/^https?:\/\//i.test(url)`），其余一律 `baseUrl + url`。于是到达 URL 修饰器的字符串已经是 `asset://localhost/E%3A%5Cmodels%5CC:\tex\a.png`，只判断"整串是不是绝对路径"的 extractLocalPath 直接返回 null → 静默不改写 → 贴图缺失（会在信息面板列成缺失资源）。
+
+【解法】formatLoaders.js 新增 extractEmbeddedLocalPath：在被拼过前缀的请求里**取最后一个** `X:\`/`X:/` 候选（前面的盘符属于 baseUrl 自身）后切出来再判定。顺序必须是 assetMap → extractLocalPath → extractEmbeddedLocalPath。
+
+【踩坑（判 scheme 的正确判据）】不能用"候选前面是不是字母"来排除 `http://` 里的 `p:/`：编码后的 `%5C`（encodeURIComponent('\')）以字母 C 结尾，会把合法的 `...%5CC:\tex\a.png` 误杀（实测三个用例一起红）。正确判据是 **`X:` 之后是否紧跟第二个分隔符**——`http://`(`p:/`)、`asset://`(`t:/`)、`file:///`(`e:/`) 命中被跳过，`C:\`/`C:/` 不会。另注意 convertFileSrc 会把冒号编码成 `%3A`，所以正常 asset URL 里不会出现字面盘符，纯相对引用能安全放行（draco/basis 解码器的 http URL 也不会被误改）。
+
+【更一般的教训】纯函数全绿 ≠ 功能可用：上一轮只单测了 extractLocalPath/normalizeReferenceUrl 就记为"只差接线"，实际接线后才发现缺一层判定。接线类改动应当直接测**真实接线点**（这里测 `createLoadingManager(...).resolveURL(拼接后的串)`，即 three 各 loader 请求外部资源时走的那一步），而不是只测纯函数。
+- [2026-09-17 11:26] [经验教训] 截图导出两坑：WebGL 读取必须与渲染同任务；Tauri capability 漏 dialog:allow-save 只在运行时炸 — model-viewer M6-4（截图导出）踩到的两处，都属于"测试全绿但功能不可用"的类型：
+
+【1. WebGL 截图必须"渲染 + 读取"在同一同步任务里】引擎的 WebGLRenderer 没开 `preserveDrawingBuffer`（开了会常驻一份额外绘制缓冲）。浏览器可能在合成之后清空绘制缓冲区，所以正确顺序是：**先同步 `renderFrame()` + `canvas.toDataURL()`，拿到 data URL 之后再去弹"另存为"对话框**；反过来（等用户选完路径再截）很可能拿到一张空图。另外提分辨率不要另写离屏 RenderTarget 读取，直接临时调高 `renderer.setPixelRatio` + `postFx.setSize` 再重渲一帧，后处理（EffectComposer）就会一起按新尺寸出图，避免直渲/后处理两条路径截图不一致；记得恢复像素比并立刻重绘，否则画布停在导出分辨率上。上限要给（单边 ≤8192，超过显卡 MAX_TEXTURE_SIZE 直接渲染失败），下限也不能低于当前显示像素比。
+
+【2. Tauri 插件的 capability 是"漏了就只在运行时失败"】用了 `@tauri-apps/plugin-dialog` 的 `save()` 就必须在 `src-tauri/capabilities/default.json` 里加 `dialog:allow-save`（原来只有 `dialog:allow-open`）。前端单测、`pnpm build` 都不会报错，只有真机点按钮才被 ACL 拒绝。**同类教训：新增任何 `@tauri-apps/plugin-*` API 调用后，先回 capabilities 清单确认权限，并用 `cargo test`/`cargo build` 跑一遍让 tauri-build 校验 capability 与插件 ACL 是否匹配。**
+
+【Rust 侧小坑】`fn 测试名()` 里带空格不是合法标识符（中文名不带空格可以）；写盘类命令把约束收在命令内部并把纯逻辑拆出来单测（base64 解码、PNG 魔数、路径校验、端到端写临时目录）比给 fs 插件开口子更划算。
+- [2026-09-17 14:12] [经验教训] Tauri SQL 插件的 ~ 展开依赖 HOME：Windows 无 HOME → 启动即 panic（已用删 preload 修复） — model-viewer 实测：`pnpm tauri dev` 启动即崩，报
+`HOME 环境变量不存在: NotPresent` → `model-viewer.exe (exit code: 101)`。
+
+【根因（读到依赖源码才定位）】`tauri.conf.json` 的 `plugins.sql.preload` 写的是 `sqlite:~/.model-viewer/app/app.db`。本项目用的 SQL 插件（社区 fork `tuyu79/plugins-workspace#v2-sql-default`）里：
+```rust
+fn expand_tilde(path: &str) -> String { ... let home = env::var("HOME").expect("HOME 环境变量不存在"); ... }
+```
+而 `expand_tilde` **只被 preload 这条路径调用**（`lib.rs` 里 `for db in config.preload { let db = expand_tilde(&db); ... }`），`Database.load` / `execute` 等命令**不调用**它。Windows 默认不设 HOME（只有 USERPROFILE），所以"启动时预加载数据库"这一步直接 panic。**此前一直能跑通只是碰巧在设了 HOME 的终端里跑（Git Bash / 部分 IDE 终端会设）。**
+
+【修复：删掉 preload（本项目不需要）】两处代码核对确认冗余：① 建库——插件 `DbPool::connect` 对 sqlite 会 `database_exists` → 不存在则 `create_database`，不需要预加载（目录由 Rust 启动时创建）；② 迁移——`add_migrations(db_url)` 按 **URL 字符串**注册，`Database.load(db)` 里 `migrations.remove(&db)` 命中即执行，前端 `join(await homeDir(), '.model-viewer','app','app.db')` 拼出的绝对路径与 Rust 注册键完全一致，而 preload 用 `~` 展开出来的是**混用分隔符**的另一串（`…\.model-viewer/app/app.db`）——也就是说迁移一直靠 `Database.load` 生效，删 preload 不会丢迁移。
+
+【护栏与验证】`paths.rs` 加单测用 `include_str!("../tauri.conf.json")` 断言配置里不出现 `~`（注释写明原因）；`cargo test` 48/48；`cargo build` 后直接在**同样没有 HOME** 的环境启动 `target/debug/model-viewer.exe`，进程存活无 panic（修复前该二进制在插件初始化阶段即退出）。
+
+【两条通用教训】① **Windows 上不要依赖 HOME**：任何 `~` 展开、`env::var("HOME")` 都会在默认环境炸；路径统一走 `dirs::home_dir()`（Windows 用已知文件夹 API）或 `USERPROFILE` 兜底。② 排查"启动即 panic"先看 panic 消息属于谁：本项目自己的代码都用 `CODE: 详情` 形式的 Result（不 panic），**出现中英混杂的 `.expect()` 文案基本就是第三方依赖**，去 `CARGO_HOME/git/checkouts|registry` 里搜那句话能立刻定位。
+- [2026-09-17 14:19] [经验教训] 锁死的应用外壳里如何做"整页滚动"：自己当滚动容器 + 关 el-main 的 overflow:auto + 禁止卡片 flex 收缩 — model-viewer 设置页"卡片内容有滚动条"的修复（commit a39cfbb，用户报的 BUG）。
+
+【根因是外壳布局链，不是卡片本身】`src/style.css` 里 `html, body { height:100%; overflow:hidden }`、`#app { width:100vw; height:100vh; overflow:hidden }` —— 外壳是**故意锁死的固定视口**（3D 视口需要它）。于是任何"内容可能超高的页面"只能靠 Element Plus `el-main` 默认的 `overflow:auto` 在内部滚动，出现嵌套滚动条；同时 `el-main` 是 `flex:1` 的 flex 子项、卡片默认 `flex-shrink:1`，内容会被压扁/裁切（本项目历史上"布局静默裁切"的同一类问题，M5 也踩过）。
+
+【修法（只改设置页，不动外壳与查看器）】
+- `.settings { overflow-y: auto }`：让页面自己当整页滚动容器（`height:100vh` 保留），头部与卡片一起滚；
+- `el-main.settings__main { flex: 1 0 auto; overflow: visible }`：**选择器必须带 `el-main` 元素限定**，否则单类选择器与 EP 的 `.el-main` 同权重、谁赢取决于打包顺序；
+- `.settings__card { flex-shrink: 0 }`：卡片只按内容撑高。
+结论：**在锁死的外壳里做"整页滚动"，要自己指定滚动容器 + 关掉内层 `overflow:auto` + 禁止 flex 收缩，三者缺一不可。**
+
+【验证方式（无浏览器时可用）】`pnpm build` 后直接在产物里断言规则，注意**设置页是懒加载路由，它的 scoped CSS 落在独立 chunk**（`dist/assets/Settings-*.css`，与 Element Plus 的基础 CSS `index-*.css` 不同文件），只搜第一个 CSS 文件会误判"规则不存在"；正确做法是遍历 `dist/assets/*.css` 找到含 `settings__main` 的那个，确认 `el-main.settings__main[data-v-…]` 带元素限定、且该 chunk 在主包 CSS 之后加载。
+
+【未决】头部（← 返回查看器）目前随页面滚走；已向用户提议可改 sticky，等其确认后再动。
+- [2026-09-17 15:04] [经验教训] 相机补间接入空闲停渲染循环的六个必须点（唤醒循环、计入持续工作、先补间后 controls.update、清帧基准、打断源全、默认不动画） — model-viewer 实现"视角切换平滑过渡"时，把相机补间接进**空闲停渲染**循环的六个必须点（commit 29bc806，`core/three/cameraTween.js` + ViewerEngine 接线，vitest 397/397）。
+
+1. **必须自己唤醒循环**：视角由面板/快捷键触发时循环往往已因空闲停掉（本项目老坑），`animateCameraTo` 里 `noteActivity()` 是功能可用性的关键，不是可选项。
+2. **补间状态要计入持续工作**：`idlePolicy.hasContinuousWork` 增加 `cameraMoving`，否则 `idleMs` 一到就把动画停半路（只靠 `noteActivity` 的活动窗口不够，idleMs 设为 0 时立刻失效）。
+3. **帧内顺序：先推进补间、再 `controls.update()`**。补间直接写 `camera.position` / `controls.target`；OrbitControls 每帧从"当前位置 − target"重算球坐标，阻尼增量为 0 时不覆盖写入值；反过来写会被 controls 抹掉。另外**瞬态挂起 `autoRotate`**（只在 `controls.update()` 那一瞬置 false 再还原）——两者都在改相机，否则"到不了目标视角"且不覆盖用户的转盘开关。
+4. **清 `lastFrameTime` 再起补间**：从空闲唤醒时首帧 delta 被夹到 `MAX_FRAME_DELTA`（100ms），对 320ms 的补间等于"起步跳掉 1/3"，看起来像卡了一下。
+5. **打断源要全**：OrbitControls 的 `start` 事件（用户一按鼠标就接手）、连续切换（后一段覆盖前一段）、`setModel`（旧终点已失效）、`dispose`（**直接 `cancel` 而不是 `cancelCameraTween`**，后者会 noteActivity 在销毁路径上重新排帧）。
+6. **只有"用户主动换视角"才动画**：`fitToObject` 的 `animate` 默认 false，加载模型/重新摆放/尺寸变化必须立刻到位，否则看到"模型飞进来"。
+
+附带设计取舍：补间逻辑放在**不依赖 three 的独立模块**（只用 `[x,y,z]` 与毫秒），因为打断源有三个、状态机边界多（起点等于终点不动画、时长下限夹取、delta 为负不倒退、NaN 位姿退化为瞬时），只有这样才能在 Node 下完整单测；`prefers-reduced-motion: reduce` 时直接瞬时落位。
+- [2026-09-17 16:05] [经验教训] 换应用图标的四个坑：public/ 会进安装包、NSIS 装包图标要单独配、图标改动不触发重编译、tauri icon 会连移动端一起生成 — model-viewer 换应用图标（commit c9e5af1，源图 `assets/Icon.png` 2048×2048 透明背景）踩到的四点，都是"不看产物就发现不了"的类型。
+
+1. **`public/*` 会被原样复制进 `dist`，而 `dist` 会被打进安装包**。源图最初放在 `public/Icon.png`（1.5 MB），实测安装包 5.72 MB；移到 `assets/` 后降到 4.3 MB。**图标源图、设计稿这类只在开发期用的大文件一律不要放 `public/`**（放 `assets/` 或 `src-tauri/icons/`）。
+2. **NSIS 安装包图标要单独配**：`bundle.windows.nsis.installerIcon` / `uninstallerIcon = icons/icon.ico`。不配时安装包用的是 **NSIS 自带图标**（不是自己的）—— 我一开始只改了 `bundle.icon`，从装包里提取图标才发现是那个绿色下载图标。
+3. **改图标后 `cargo build` 不会自动重编译**：`tauri-build` 没为图标文件注册 `rerun-if-changed`，会打印 "Finished in 0.3s" 而资源仍是旧的；需要 `touch build.rs`（或 `cargo clean -p model-viewer`）强制重建。dev 窗口图标来自 exe 资源，**必须重启 `pnpm tauri dev`** 才更新。
+4. **`tauri icon` 默认连移动端图标一起生成**：`src-tauri/icons/android/` + `ios/` 合计 870 KB，桌面项目直接删掉即可（需要时重新生成）。
+
+【验证手法（无 GUI 也能做，值得复用）】用 .NET 从**构建产物**里把图标抠出来再肉眼比对：
+```powershell
+Add-Type -AssemblyName System.Drawing
+$i = [System.Drawing.Icon]::ExtractAssociatedIcon("src-tauri\target\release\bundle\nsis\三维模型查看器_0.1.0_x64-setup.exe")
+$i.ToBitmap().Save("installer-icon.png", [System.Drawing.Imaging.ImageFormat]::Png)
+```
+对 debug exe 与 NSIS 安装包分别做，两者都应是自己图标。另可用 `GetPixel` 抽样确认源图是否真透明（本例 73.7% 像素透明，所以任务栏里是异形图标而不是白方块）。
+- [2026-09-18 08:56] [经验教训] 入场动画的实现要点：起点由终点推导、端点直接赋值（1ULP）、唤醒+清帧收在一处、瞬时适配保留、夹取下限别卡掉退化情形 — model-viewer 实现"模型加载完成入场动画"（commit 529e5e3，相机从更远略高处推入，650ms）的可复用要点：
+
+1. **入场起点只由终点推导**（沿同一视线推远 1.9×、抬高 `距离×0.12`），与"上一个相机停在哪"无关 → 每次加载表现一致、可纯函数单测。改造前本来就是瞬跳到适配位姿，"跳到更远处再滑进来"不是回退。
+2. **端点必须直接赋值，不要走 lerp**：`a + (b - a) * 1` 在 IEEE754 下可能差 1ULP，而"补间终点与适配位姿**完全一致**"是硬要求（否则连续切视角留极小漂移、几何体错位）。做法：`sampleCameraTween` 在 progress 0/1 时直接返回端点副本。
+3. **把"唤醒循环 + 清帧时间基准"收在同一个 helper 里**（`startCameraTween`）：这是补间能播的两个前提，分散写迟早漏一处（本项目历史上"命令改了状态但没有帧渲染"就是这个坑）。`animateCameraTo` 与入场共用它。
+4. **瞬时适配必须保留**：先 `setModel(fit:true)` 把相机摆正、再播入场。这样动画被跳过时（系统「减少动效」/位姿不可用/引擎销毁）相机依旧正确取景，不会出现"半个动画或错误取景"。
+5. **动画触发时机要晚于状态就绪**：放在 `model.setReady()` 之后而不是 `setModel` 内部——`setModel` 之后还有统计与状态回写，当时就起动画会被加载遮罩挡掉开头一段。
+6. **夹取下限别把"退化情形"卡掉**：`ENTRANCE_FACTOR_RANGE.min` 一开始写 1.05，导致文档里承诺的 `factor=1 && lift=0 → 与终点完全相同`（进而"不动画"）永远走不到，被单测当场抓住；下限改成 1 后既保留"只抬高不推远"的合法组合，也与退化情形相接。**凡是有"关闭/退化"组合的参数，夹取区间必须容纳该组合。**
+
+【只动相机、不做模型缩放/淡入的理由】`ModelPlacement` 只管位置、`ModelOrientation` 只管姿态，`root.scale` 虽然空着，但缩放会让 CSS2D 的尺寸标注与模型错位；按材质淡入又要与 `ShadeController` 的材质克隆、线框/顶点色模式纠缠。相机移动对 CSS2D 完全安全（每帧按相机投影）。
+- [2026-09-18 09:49] [经验教训] 两个侧栏布局坑：el-slider 按钮热区在 100% 处溢出 18px（全局 padding 修）；flex 行需 flex:1+min-width:0 才能收窄并右对齐 — model-viewer 两个侧栏布局 BUG 的根因与修法（commit fc9bea4，均可复用）：
+
+【1. Element Plus 滑块在最大值处向右溢出 18px → 窄容器出现横向滚动条】
+`.el-slider__button-wrapper` 是 **36×36 的绝对定位方块**（`--el-slider-button-wrapper-size: 36px`），居中压在 0%/100% 上：拖到最大时它的一半（18px）落到跑道之外；跑道是 `.el-slider__runway{flex:1}` 铺满内容宽度 → 在侧栏这类窄容器里就撑出横向滚动条（与"提示气泡是否显示"无关）。
+**修法（全局一条，一次覆盖所有面板）**：`src/style.css` 加
+```css
+.el-slider:not(.is-vertical) { padding: 0 20px; }   /* 18px 热区 + 2px 余量防子像素舍入 */
+```
+竖直模式的热区在纵向（`.el-slider.is-vertical`），所以要排除。
+**排查要点**：滑块的提示气泡是 `el-tooltip` 渲染并**传送到 body** 的，不参与溢出计算 —— 别把它当成嫌疑对象。
+
+【2. flex 行里内容过长会把尾部按钮挤出视野（看起来"没右对齐"）】
+层级树节点行原来写 `width: 100%`，而 flex 子项默认 `min-width: auto` 不允许收窄到内容宽度以下 → 长名字把整行撑宽，容器 `overflow: auto` 于是横向滚动，右侧的操作按钮被推到视野外。
+**修法（canonical）**：行 `flex: 1; min-width: 0`；会变长的标签 `flex: 1 1 auto; min-width: 0` + `overflow:hidden; text-overflow:ellipsis; white-space:nowrap`；尾部操作区 `flex-shrink: 0` + `margin-left: auto`（原有）。
+
+【过程教训】我凭记忆认定"显示面板里的滑块写死了 320px 会溢出"，实际 grep 后发现那两处在**设置页**（960px 宽，不溢出），显示面板根本没有固定宽度滑块 —— **布局值属于易记错的事实，动手前先 grep/读文件核对，别按记忆改。**
+
+【验证手法】改 CSS 时在产物里断言：`pnpm build` 后遍历 `dist/assets/*.css`（主包与懒加载 chunk 分开），用正则确认规则真的写进去了、且带 `[data-v-...]` 或不带（全局 vs scoped）。
+- [2026-09-18 14:39] [经验教训] CSS2D 标签不继承父级 visible；gizmo 用 sizeAttenuation:false + depthTest:false，方向线取真实 target；只读策略是逐次判定需先请用户放宽 — model-viewer 实现"光源可视化"时确认的两处可复用结论（commit edd7a66，`core/three/lightGizmos.js`）：
+
+【1. CSS2DRenderer 只看对象自身的 `visible`，不继承父级】
+把一组 CSS2D 标签挂在一个 Group 下，然后 `group.visible = false` —— **标签仍然会显示**。`setVisible()` 必须遍历标签逐个设置 `visible`（`boundingBox.js` 的 `BoundingBoxOverlay.setVisible` 当初就是这么写的，原因在此）。凡是给 CSS2D 标签做开关，都要照这个模式。
+
+【2. 3D 辅助示意（gizmo）的稳妥画法】
+- 标记点用 `sizeAttenuation: false` 的 `Points`：**屏幕像素大小恒定**，模型 1 单位还是 1000 单位、相机拉多远都看得清；"按世界尺寸画球"在超大/超小模型上会大到挡画面或小到看不见。
+- `depthTest: false` + 较高 `renderOrder`：辅助标记不是几何体，被模型包住时（大模型下光源常落在模型内部）也必须可见。
+- 多个标记点合成**一个 Points**（顶点色区分），一次 draw call；`update()` 只就地改属性、不重建对象 —— 光照面板拖滑杆是高频调用。
+- 方向线的终点要取**真实朝向目标**：`DirectionalLight.target` 默认在原点且本项目没改过，所以线指向原点才与实际打光一致（指向"模型中心"是错的，因为模型被摆放成底部贴地后几何中心并不在原点）。
+- 关闭/失效的对象**也要画出来**（灰色 + 文案标注），否则用户无法回答"它本来在哪、是不是关着"。
+- 标签位置用 CSS2DObject.center（元素尺寸的比例）偏移，而不是在世界坐标里加固定偏移 —— 后者在缩放时会与标记点分家。
+
+【3. 顺手记录的环境事实】DSH 的只读文件策略是**逐次判定**的：每次写文件都要单独 `sandbox_permissions` 升级 + 一次授权弹窗，"一次批准"不会让后续写操作放行。改动涉及十几个文件时，正确做法是先请用户把会话策略切到 workspace-write，而不是让对方点十几次同意。
+- [2026-09-21 14:44] [经验教训] three 的 FBXLoader 能力矩阵与"静默降级"：单位只存不用、PBR 变纯黑、<7000 直接抛错、其余只 warn；用 try/finally 接管 console.warn 把它们变成界面提示 — model-viewer 做 FBX 兼容性改进时查清的上游事实与手法（commit 8408ad8，three r185）：
+
+【1. three 的 FBXLoader 能力矩阵（读源码确认，别再凭印象）】
+- **Z-up 自动纠正**：`UpAxis === 2` 时 loader 自己 `sceneGraph.rotation.set(-π/2,0,0)` —— 但**只认取值 2**；`UpAxisSign = -1`、X-up(X=0) 都不处理。
+- **ASCII 与二进制 FBX 都支持**；**嵌入贴图支持**（读 `Video.Content` 的 ArrayBuffer/base64）。
+- **单位只存不用**：`addGlobalSceneSettings()` 把 `UnitScaleFactor` 写到 `sceneGraph.userData.unitScaleFactor`，既不缩放也不告知；而且 `parseScene` 中途会把"只有一个分组"的场景 **unwrap 一层**，所以读这个字段要做浅层兜底（根找不到就看直接子节点）。
+- **版本硬门槛**：`FileVersion < 7000`（FBX 6.x）直接 `throw`。
+- **材质只支持 Lambert/Phong**；PBR(Stingray) 解析失败表现为**纯黑**（不是报错）。
+- 其余降级**只 `console.warn`**：不支持的贴图通道、多层贴图只留第一层、一个骨骼挂多个几何体、图片格式不支持。**"兼容性差"的体感主要来自这种静默降级，而不是打不开。**
+
+【2. 把 loader 的静默降级变成界面提示（手法）】加载期间临时替换 `console.warn`，把带 `THREE.FBXLoader`/`FBXLoader` 前缀的告警收集、翻译、去重限流后走应用的 warnings 通道；非前缀日志透传。**必须用 `try/finally` 还原 `console.warn`（成功与抛错都要），并写单测锁住"抛错后 console.warn 仍是原函数"** —— 否则全局日志被永久劫持。这是唯一可行办法：这些降级既不返回也不抛错。
+
+【3. 测试里踩到的小坑】`new Mesh()` **一定带一个白色默认材质**（three 构造器的默认参数），所以"没有材质"的用例必须显式 `mesh.material = null`；否则断言会莫名少一条。另外导入常量时注意 `CLAY_COLOR` 来自 `materialNormalizer.js` 而非新模块。
+
+【4. 仍未做的 FBX 坑（下次要继续从这里开始）】① 上轴：`UpAxisSign = -1` / X-up 不处理；且**loader 已自动转 Z-up 后，用户在「模型轴向」再手动选「按 Z-up 处理」会反向躺倒**（手动模式语义需要相对"是否已转过"计算）；② 动画：three 只认标准 `AnimStack → AnimLayer → AnimCurveNode`，缺失时本应用无任何提示，需要"加载诊断摘要"（版本/编码/蒙皮网格数/动画源节点数）来定位。
+- [2026-09-21 15:34] [经验教训] 模板用 store 必须 import + 顶层实例化；diagnose-sfc 原先抓不到"未声明的名字"（15/15 全绿仍崩），已补检查并用修复前文件验证能抓到 — model-viewer 修掉一个我自己上一轮引入的线上级 BUG，结论对以后每次"给模板加新数据源"都适用（commit 0115ac8）：
+
+【现象与根因】启动即报 `LightingPanel.vue: Cannot read properties of undefined (reading 'showLightGizmos')`。原因是给光照面板加「在视口中显示光源」开关时，**只写了 `import { useDisplayStore }`，忘了写 `const display = useDisplayStore()`**。`<script setup>` 里没有这个顶层声明，模板里的 `display` 就退化成实例属性访问 → 渲染时读到 `undefined`。
+**规则：模板里要用一个 store/组合式结果，必须同时做两件事 —— import + 在 setup 顶层实例化。只 import 不会报错，编译期一切正常。**
+
+【关键：项目自带的诊断工具原本抓不到这类错误】`scripts/diagnose-sfc.cjs` 的判定是"把 `compileTemplate` 里的 `_ctx.<name>` 与 `compileScript` 的绑定集合取交集"，也就是**只查"已声明却退化成实例访问"**；对"模板引用了**根本没声明**的名字"完全无感 —— 所以它当时给我报了 **15/15 全绿，而程序一启动就崩**。现已扩展：`_ctx.<name>` 若既不是绑定、也不在允许列表（Vue 内置 `$slots/$attrs/$props/...` 与 JS 全局 Math/Date/JSON/...）里，就报"模板引用了未声明的名字（构建不报错，渲染时才是 undefined）"。
+**含义：diagnose-sfc 的"全绿"现在才真正覆盖了这两类模板/脚本不一致；以后新增模板数据源时它是有用的把关，但仍测不到逻辑错误（它只是编译器级静态检查）。**
+
+【验证手法（值得复用）】证明"新增的检查真的能抓到"：用 `git show HEAD:<path> > $env:TEMP\x.vue` 把**修复前**那份文件取出来，再对临时文件跑一次诊断，确认它精确报出 `display`；同时跑全量确认 15 个组件无误报。**改检查规则时既要验证"能抓到坏样本"，也要验证"不误报好样本"。**
+- [2026-09-21 17:45] [经验教训] three 性能四事实：light.visible 触发全材质重编译／EffectComposer.resize 重建 RT／恒等 pass 白跑／解码器 dispose 销毁 worker 池 — model-viewer 做渲染性能优化时读 three r185 源码确认的四个可复用事实（都带文件行号，别再凭印象）：
+
+【1】改 `light.visible` 会让**所有材质重新编译 shader**。
+证据链：`WebGLRenderer.projectObject` L1833 `if (object.visible === false) return`（不可见对象不进 renderList，光源也不进）→ `WebGLLights.setup` L277/303 按进入顺序填 `state.directional[]` → `WebGLPrograms` L338 `numDirLights: lights.directional.length`，L472 把它打进 `getProgramCacheKey`。
+⇒ 拨一次光源开关 = program key 变化 = 全模型重编译（材质越多越卡）。
+**正确做法：关闭光源用 `intensity = 0`，`visible` 恒为 true。** 视觉等价（`WebGLLights` L281 `uniforms.color.copy(light.color).multiplyScalar(light.intensity)` → color 被乘成 0），且 L268-305 对 intensity 无跳过逻辑，数量恒定。同理 `scene.environment` 在 null↔texture 间切换也改 program key。
+
+【2】`EffectComposer.setSize` 会**销毁并重建** render target。
+`EffectComposer.setSize` L317-334 → `renderTarget1/2.setSize` → `RenderTarget.setSize` L297 `if (尺寸变了) { ...; this.dispose() }` L321（释放 GPU 纹理，下一帧重新分配）。
+⇒ ResizeObserver 若不去抖，拖窗口边框时**每个尺寸事件**都重建 2 个 render target（HalfFloat + 4×MSAA 下极贵）。
+另注：`composer.setPixelRatio()` 内部自己会调一次 `setSize`（L342-347），紧接着再显式 `setSize` 是冗余的。
+
+【3】默认参数下**白跑一趟恒等全屏 pass**。`mix(vec3(luma), texel.rgb, 1.0)` ≡ 原色，但 saturation=1 是默认值。用 `ShaderPass.enabled = false` 跳过（保留对象，值回到非 1 时立即恢复，无需重建 composer）。
+
+【4】`DRACOLoader.dispose()` / `KTX2Loader.dispose()` 会**销毁 worker 池**。原来在每次加载的 finally 里 dispose，导致每打开一个模型都重新 spawn worker + 实例化 WASM。解码器应做成应用级共享（惰性单例），只在引擎销毁时释放。
+**写这个缓存的两个坑**：① 并发调用会让 `if (!cache) { await ...; cache = ... }` 各建一组 → 必须共享同一个创建中的 Promise；② 共享实例只能绑一个 LoadingManager，硬绑会出现“第二次加载收到第一次的进度回调”的串扰。
+- [2026-09-21 17:45] [经验教训] 本沙箱下 vitest/vite 必然 EPERM 需要 danger-full-access；diagnose-sfc 与文件读写可直接跑 — 在 DSH 受限沙箱下跑 model-viewer 的验证命令时的可复用结论（本会话实测）：
+
+**会 EPERM 的（必须升级到 danger-full-access 才能跑）**：
+- `pnpm test` / `pnpm exec vitest run ...`：vite 加载 config 时 esbuild 要 spawn 子进程服务（named pipe）→ `spawn EPERM`，errno -4048。
+- `pnpm build`：vite 在 Windows 上用 `child_process.exec` 解析真实路径（`windowsSafeRealPathSync` → `optimizeSafeRealPathSync`）→ 同样 `spawn EPERM`。
+- 关键：**workspace-write 也拦不住这个** —— 文件策略放宽到 workspace-write 后，命名管道限制依旧（两种 confined mode 都禁），所以这两条命令必须走 `danger-full-access`。
+
+**能直接跑的（无需升级）**：
+- `node scripts/diagnose-sfc.cjs`（纯文本分析的 SFC 诊断，15 组件）
+- 文件读写（workspace 内）在 workspace-write 下正常。
+
+**操作要点**：同一会话内首次被拒后，后续同类命令可以直接 upfront 申请 danger-full-access（提示允许“本会话已拒绝过同一访问”时前置升级）；被拒的第一次不要换写法绕，直接原命令 + `sandbox_permissions` 重试。
+
+**回归三件套**（本项目当前基线）：`pnpm test`（463/463，41 文件）+ `node scripts/diagnose-sfc.cjs`（15/15）+ `pnpm build`。零 Rust 改动时可不跑 `cargo test`。
+- [2026-09-21 18:05] [经验教训] 后处理与阴影六条：castShadow 也改 program key／通道一次性建好只切 enabled／世界尺度参数／线性空间能做与不能做／冒烟测试必抓 API 误用／不动 light.target — model-viewer 做后处理/阴影时确认的 six 条可复用结论（都读过 three r185 源码或实测）：
+
+【1】`castShadow` 开关同样会触发全材质重编译。program cache key 里除了 `numDirLights` 还有 **`numDirLightShadows`**（`WebGLPrograms.js` 取 `lights.directionalShadowMap.length`）。所以"关阴影"用一个 `if` 是省不掉的（除非像光源那样用 `shadow.intensity = 0`）。**但每帧重渲 shadow map 是可以省掉的**：`renderer.shadowMap.autoUpdate = false` + 只在内容真变化时置 `needsUpdate = true`。查看器里相机移动**不影响影子**，所以静态查看时 shadow map 开销为零。脏标记要挂在：模型加载/可见性/摆放/轴向/光源/动画帧。
+
+【2】通道化后处理的两个关键设计。① **所有通道在 composer 创建时一次性建好，之后只切 `pass.enabled`** —— 动态增删 pass 会逼你在"开关效果"时重建 render target（每帧级别的大开销）；未启用的 pass 不产生 GPU 时间。② 用 `isIdentity(settings, pass)` 统一声明"当前参数下这一趟等于没做"（饱和度=1、AO 强度 0、泛光 0、描边没选中），比在每个通道里手写 `pass.enabled` 干净，且把"恒等跳过"这个优化变成了管线级保证。
+
+【3】后处理参数里的**世界尺度陷阱**。GTAOPass 的 `radius`、BokehPass 的 `focus` 都是**世界单位**，写死会"换个模型就失效"（同一个 0.5 对 1cm 零件和 100m 建筑完全不是一回事）。做法：设置里存**相对比例**，由引擎按包围球半径/相机距离写入运行时字段（`sceneRadius`/`focusDistance`），并在持久化时用"只存 UI 可调项"的规则把这些运行时字段排除掉。
+
+【4】线性空间 vs 显示空间。后处理链在 OutputPass **之前**，工作在线性（HDR）空间。在这里做以下操作是**正确**的：通道增益（色温）、乘法衰减（暗角）、泛光（光晕本就发生在 HDR 亮度上）。而**对比度是显示空间的非线性操作**（以 0.5 中灰为中心拉伸），放线性空间会得到"曝光式"结果，与用户预期不符 —— 宁可不做也别做错。
+
+【5】通道文件必须有"真实构造一次"的冒烟测试。只测管线组装抓不到 three API 用错。做法：用真实的 `new Scene()` + `new PerspectiveCamera()`（Node 下可创建），逐个 `create → setSize → dispose`，只跳过需要 GPU 的渲染。**这次立刻抓到真问题**：测试最初把空对象当 camera 传给 GTAOPass，`setSize` 里 `Matrix4.copy(camera.projectionMatrix)` 直接炸。
+
+【6】`fitShadowCamera` 刻意**不动 `light.target`**：方向光的 target 决定光照方向，把靶心挪到模型中心等于悄悄改了打光（项目定位是忠实呈现，不该有这种意外变化）。代价是视锥要以原点为中心去覆盖"偏心的包围球"，所以正交范围要把球心偏离原点的量算进去（`extent = (radius + |center|) * 1.1`）。接收阴影用 `ShadowMaterial` 平面（只显示阴影、自身透明），不必真往场景摆地板。
+- [2026-09-21 18:11] [经验教训] three 阴影必须两侧都开（Object3D.castShadow 默认 false）；且"只在变化时同步"会漏掉首次应用 — model-viewer 实测"模型没有阴影"，两个独立根因叠加（任何一个都足以让画面一片影子都没有）。两条都是可复用的踩坑结论：
+
+【根因 1】**three 的阴影是"两侧都要开"的**。`Object3D.castShadow` / `receiveShadow` **默认都是 `false`**，所以：
+- 只配光源 `light.castShadow = true` 而模型网格没开 → **完全没有影子，且没有任何报错或警告**；
+- 反过来只开模型也没用。
+正确做法：模型加载后 `root.traverse(node => { if (node.isMesh || node.isSkinnedMesh) { node.castShadow = true; node.receiveShadow = true } })`（点云/线框覆盖层不该参与）。本项目当时只配了光源侧。
+**护栏**：抽成纯函数 `enableModelShadows(root)` 可单测；测试里**先断言 three 的默认值是 false**，再验证被打开 —— 那条断言本身就是"为什么必须显式打开"的文档。
+
+【根因 2】**"只在变化时同步"的写法会漏掉首次应用**。`setShadowEnabled` 只写在 `applyDisplaySettings` 里且包在 `if (showShadow !== previous.showShadow)` 内；而构造时 `showShadow` 的初始值就是默认值 `true`，首次调用传入的也是 `true` → 条件永远不成立 → 光源的 `castShadow` 始终是 false。
+**教训**：凡是"按变化量触发副作用"的地方，必须同时保证**初始状态被应用过一次**（在 constructor 里显式同步），或者改成幂等的无条件同步。这里两者都做了：constructor 显式调一次 + applyDisplaySettings 改为每次幂等同步（只把"打重渲标记"留给变化判断）。`setShadowEnabled` 本身幂等（three 的 program 参数没变就命中缓存），所以无条件调用没有额外代价。
+
+【排障经验】像"配置了但什么也没发生"这类问题，最有效的手段是把链路两侧的状态**暴露到可一键复制的诊断输出里**。本轮给性能快照的 shadow 段加了 `lightCasts`（主光是否投影）与 `catcher`（接收面是否可见），下次一眼就能分辨是光源侧还是接收侧的问题，不必再读一遍代码。
 
 ## 行动指南 Action Guide
 
@@ -330,6 +570,39 @@
 【我给用户的建议取舍（待其确认，未拍板）】**UI 跟随明暗、3D 视口背景不跟随**（视口背景仍由「显示 → 背景」控制、默认深色）——理由：Blender/Maya 等主流三维软件即使 UI 是亮色，视口也常保持深色，更利于判断形体与材质；跟随会破坏用户已调好的观感。
 
 【行动约束】提出该方案时沙箱处于**只读**模式，实施需要用户批准写权限（用 sandbox_permissions 申请）。下一步动作：等用户回答"是否按此方案实施 / 是否只做跟随系统"，再动手。
+- [2026-09-17 10:24] [行动指南] M6 完成（除真机验收）：7 项全部有结论，NSIS 安装包已产出，远端 881c4d7 — E:\AI-Coding\model-viewer 的 M6 收尾状态与交接。**M6 七项全部有结论：第 1~6 项完成，第 7 项已完成可自动化验证的全部内容**。远端 origin/main = **881c4d7**（本地与远端一致）。
+
+【本轮 8 个提交，对应设计文档 §23~§29】
+- 66a4994 文案修正；54abf35 M6-1 最近文件；5620a3c M6-2 手动轴向覆盖；ccdb45a M6-3 MTL 绝对路径接线；0d89ba6 M6-4 截图导出；82fd7c8 M6-6 文件关联+单实例；3e4804b M6-5 HDR/EXR 导入；949b614+881c4d7 M6-7 打包与基准。
+- 关键教训已单独入库：0decba8645bc（MTLLoader 会把 baseUrl 拼在绝对贴图路径前，必须多一层 extractEmbeddedLocalPath）、867a37b1853a（WebGL 截图"渲染+读像素"必须同一同步任务；Tauri capability 漏 dialog:allow-save 只在运行时炸）。
+
+【M6-7 最终结论（重要，此前"打不出安装包"的记录已作废）】
+- **NSIS 安装包已成功产出**：`src-tauri/target/release/bundle/nsis/三维模型查看器_0.1.0_x64-setup.exe`（5.72 MiB）。前两次 `timeout: global` 是 GitHub 下载**瞬时**不通（当时 curl 复测 github.com:443 确实连不上），第三次重试即成功 —— **遇此报错先重试，别急着判定环境不可用**。
+- **已按用户决定改配置**：`bundle.targets` 由 "all" 改为只打 **nsis**（避开 WiX3 的 .NET Framework 3.5 依赖；中文产品名在 NSIS 下没问题）；`identifier` 由 `com.model-viewer.app` 改为 `com.shinezer0.modelviewer`（消除 `.app` 结尾告警）。数据目录不受 identifier 影响（固定用 `~/.model-viewer/app`）。
+- MSI 不用了：`light.exe` 失败已用「ASCII productName」A/B 试验排除中文名因素，属 WiX 运行时/安全策略问题。
+- 基准：`scripts/make-benchmark-model.mjs`（默认 100,352 面 / 4.8MiB，传参可到 399,618 面）+ `tests/make-benchmark-model.test.js`（9 例自检）。**FPS 数值必须真机读**：打开 STL → `F` 适配 → `I` 显示 HUD → 记静止 5s 稳定 FPS 与转盘（`T`）FPS。
+
+【验证基线】vitest **381/381（35 文件）**、cargo **47/47**、diagnose-sfc **15 组件**、pnpm build 成功、`pnpm tauri build` 成功出包。
+
+【仅剩的用户侧验收（自动化测不到，建议装包后一次走完）】
+① 双击关联文件直接打开、程序已运行时再双击应复用同一窗口（单实例）；② 最近文件重开（含中文路径）与失效路径提示；③ 切换模型轴向；④ 绝对路径 map_Kd 的 OBJ 贴图；⑤ 截图另存后画面完整；⑥ 导入 HDR → 存为主题 → 重启仍能复现（副本在 `~/.model-viewer/app/env/`）；⑦ 十万级三角面模型的 FPS。
+
+【环境约束（仍有效）】vitest / vite / cargo 拉新依赖 / `pnpm tauri build` / git push 一律需 `sandbox_permissions: danger-full-access`；纯本地 git 命令不需要。安装包工具链走 github.com:443，本环境时通时不通（SSH 22 与 crates.io 稳定）。协作硬规约：**同一文件禁止在同一条消息里并发编辑**；PowerShell 里 git commit 的 `-m` 消息不要含双引号（会被拆成 pathspec）。
+- [2026-09-17 14:19] [行动指南] 交接：远端 0115ac8（含光源开关 BUG 修复与诊断工具扩展），FBX 上轴/动画诊断与若干 UI 决策待办 — model-viewer 交接（远端 origin/main = **0115ac8**，本地与远端一致；工作区仅剩 memoir 的 PROJECT_MEMORY.md）。
+
+【当前位置】M6 七项全部有结论（§23~§29）；此后陆续补齐：图标、视角切换平滑过渡、模型入场动画、两个侧栏布局修复、光源可视化、FBX 兼容性四项、以及一个开关遗漏实例化的启动级 BUG 修复。逐条细节与教训见记忆 3c567b7a6f86、87fd214ee38c、290801e17e4a、2813da304363、15ddd639a187、09c07c422deb、fc6adc9eaa2f、d2978e7e18b0、172dab5fa415（本轮）。
+**验证基线**：vitest **434/434（38 文件）**、cargo **48/48**、`scripts/diagnose-sfc.cjs` 15 组件（已扩展"未声明名字"检查）、pnpm build 成功、`pnpm tauri build` 可产出 NSIS 安装包（含图标与文件关联）。
+
+【FBX 后续（用户确认过症状，但本轮只做了四项：告警接管/单位识别/材质兜底/报错翻译，见 §35）】
+1. 上轴：`UpAxisSign = -1` 与 X-up 不处理；且 loader 已自动转 Z-up 后用户再手动选「按 Z-up 处理」会**反向躺倒**（手动模式语义要相对"是否已转过"计算）。
+2. 动画：three 只认标准 `AnimStack → AnimLayer → AnimCurveNode`，缺失时应用无提示；可做"加载诊断摘要"（版本/编码/蒙皮网格数/动画源节点数）来定位。
+3. 若用户给出具体出问题的 FBX，优先精准修那一个文件。
+
+【其它待用户确认】① 光源可视化是否改成"切到光照页自动显示"、标签是否加方位角/仰角、环境光要不要示意；② 适配视图 `F` 与层级树聚焦仍是瞬移（§31.4）；③ 设置页头部是否 sticky、`public/favicon.svg` 是否删除、图标源图是否移回 `public/`；④ 入场动画进阶项（§33.4）；⑤ 已知但刻意未改：`ViewerEngine.fitToObject` 返回的 `box` 取入参而非实算 `targetBox`。
+
+【真机验收（自动化测不到）】启动正常 + 设置/最近文件读写；双击关联打开与单实例转交；最近文件重开与失效路径提示；切换模型轴向；截图另存；导入 HDR→存主题→重启复现；十万级三角面 FPS；视角过渡与入场动画观感；层级行按钮右对齐、滑块到底无横向滚动条；光源可视化开关；FBX 新提示（单位预选、降级告警、PBR 不再发黑、6.x 友好报错）。
+
+【环境与流程约束】vitest / vite / cargo 拉新依赖 / `pnpm tauri build` / git push 需 `sandbox_permissions: danger-full-access`。**只读文件策略是逐次判定的**：每次写文件都要单独升级+授权，多文件改动前先请用户把会话切到 `workspace-write`（本会话已两次遇到）；策略切换后需重新 read 再 edit。`git commit -m` 消息不要含 ASCII 双引号。同一文件禁止在同一条消息里并发编辑。**上游行为/布局数值/框架内部实现类事实，动手前先读源码或 grep 核对，别凭记忆**（已因此踩过两次：误记 DisplayPanel 有 320px 滑块、漏一次 store 实例化）。
 
 ## 备注 Notes
 

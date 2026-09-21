@@ -1,4 +1,4 @@
-import { Scene } from 'three'
+import { Box3, Group, Line, Mesh, Points, Scene, Vector3 } from 'three'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -11,6 +11,7 @@ import {
   createThemePayload,
   degradeStaleImportedEnvironment,
   describeLightPositions,
+  enableModelShadows,
   normalizeColor,
   normalizeLight,
   normalizeLightingState,
@@ -227,17 +228,47 @@ describe('LightingRig', () => {
     expect(scene.children).toContain(key)
 
     const fill = rig.lights.get('fill')
-    expect(fill.visible).toBe(false)
+    // 关闭的灯必须**留在场景里**（visible 保持 true）、只把强度归零：
+    // 这样 three 算出的 numDirLights 恒定，拨开关不会触发全材质 shader 重编译
+    expect(fill.visible).toBe(true)
+    expect(fill.intensity).toBe(0)
 
     const rim = rig.lights.get('rim')
     expect(rim.position.y).toBeCloseTo(6, 5)
 
     expect(rig.hemisphere.intensity).toBe(0.5)
     expect(rig.hemisphere.visible).toBe(true)
+    // 计数按"真的在发光"算，因此被关掉的 fill 不计入
     expect(rig.enabledCount).toBe(2)
 
     rig.dispose()
     expect(scene.children).toHaveLength(0)
+  })
+
+  it('开关光源只改强度、不改 visible（否则 numDirLights 变化会让全部材质重编译）', () => {
+    const scene = new Scene()
+    const rig = new LightingRig(scene)
+
+    rig.apply(
+      normalizeLightingState({ lights: [{ role: 'fill', enabled: true, intensity: 1 }] }),
+    )
+    const visibleWhileOn = [...rig.lights.values()].map((light) => light.visible)
+    expect(rig.lights.get('fill').intensity).toBe(1)
+
+    rig.apply(
+      normalizeLightingState({ lights: [{ role: 'fill', enabled: false, intensity: 1 }] }),
+    )
+    expect(rig.lights.get('fill').intensity).toBe(0)
+    // 关键保证：可见性序列完全没变 → program cache key 稳定
+    expect([...rig.lights.values()].map((light) => light.visible)).toEqual(visibleWhileOn)
+    expect(visibleWhileOn).toEqual([true, true, true])
+
+    // 半球光同理：关掉环境光也只归零强度
+    rig.apply(normalizeLightingState({ ambient: { enabled: false, intensity: 0.5 } }))
+    expect(rig.hemisphere.visible).toBe(true)
+    expect(rig.hemisphere.intensity).toBe(0)
+
+    rig.dispose()
   })
 
   it('dispose 后场景里不残留光源', () => {
@@ -246,6 +277,114 @@ describe('LightingRig', () => {
     expect(scene.children.length).toBeGreaterThan(0)
     rig.dispose()
     expect(scene.children).toHaveLength(0)
+  })
+})
+
+describe('LightingRig 阴影', () => {
+  it('默认不投影；开启后只有主光投影（三盏都投会互相干扰，反而看不清形体）', () => {
+    const scene = new Scene()
+    const rig = new LightingRig(scene)
+
+    expect(rig.shadowEnabled).toBe(false)
+    expect(rig.lights.get('key').castShadow).toBe(false)
+
+    expect(rig.setShadowEnabled(true)).toBe(true)
+    expect(rig.lights.get('key').castShadow).toBe(true)
+    expect(rig.lights.get('fill').castShadow).toBe(false)
+    expect(rig.lights.get('rim').castShadow).toBe(false)
+
+    expect(rig.setShadowEnabled(false)).toBe(false)
+    expect(rig.lights.get('key').castShadow).toBe(false)
+
+    rig.dispose()
+  })
+
+  it('阴影相机是正交范围且覆盖包围球（含球心偏离原点的量）', () => {
+    const scene = new Scene()
+    const rig = new LightingRig(scene)
+    rig.apply(normalizeLightingState({ lights: [{ role: 'key', enabled: true, radius: 10 }] }))
+
+    const box = new Box3(new Vector3(-2, 0, -2), new Vector3(2, 4, 2))
+    expect(rig.fitShadowCamera(box)).not.toBe(null)
+
+    const camera = rig.lights.get('key').shadow.camera
+    // 包围球半径约 3.46、球心(0,2,0)偏离原点 2 → 范围必须比包围球本身更大
+    expect(camera.right).toBeGreaterThan(3.46)
+    expect(camera.left).toBeCloseTo(-camera.right, 10)
+    expect(camera.top).toBeCloseTo(camera.right, 10)
+    expect(camera.bottom).toBeCloseTo(-camera.right, 10)
+    expect(camera.near).toBeGreaterThan(0)
+    expect(camera.far).toBeGreaterThan(camera.near)
+
+    rig.dispose()
+  })
+
+  it('空包围盒/空值时不动相机参数（无模型时不该乱设）', () => {
+    const scene = new Scene()
+    const rig = new LightingRig(scene)
+
+    expect(rig.fitShadowCamera(new Box3())).toBe(null)
+    expect(rig.fitShadowCamera(null)).toBe(null)
+
+    rig.dispose()
+  })
+
+  it('光源拉远后 near/far 随距离变宽（否则影子会被裁掉）', () => {
+    const scene = new Scene()
+    const rig = new LightingRig(scene)
+    const box = new Box3(new Vector3(-1, 0, -1), new Vector3(1, 2, 1))
+    const camera = rig.lights.get('key').shadow.camera
+
+    rig.apply(normalizeLightingState({ lights: [{ role: 'key', enabled: true, radius: 4 }] }))
+    rig.fitShadowCamera(box)
+    const farWhenNear = camera.far
+
+    rig.apply(normalizeLightingState({ lights: [{ role: 'key', enabled: true, radius: 20 }] }))
+    rig.fitShadowCamera(box)
+
+    expect(camera.far).toBeGreaterThan(farWhenNear)
+    expect(camera.near).toBeGreaterThan(0)
+
+    rig.dispose()
+  })
+})
+
+describe('enableModelShadows', () => {
+  it('给所有网格打开投影与接收（three 的默认值都是 false）', () => {
+    const root = new Group()
+    const mesh = new Mesh()
+    // 先钉住 three 的默认值：这条断言本身就是"为什么必须显式打开"的说明
+    expect(mesh.castShadow).toBe(false)
+    expect(mesh.receiveShadow).toBe(false)
+
+    root.add(mesh)
+    const nested = new Group()
+    const deep = new Mesh()
+    nested.add(deep)
+    root.add(nested)
+
+    expect(enableModelShadows(root)).toEqual({ meshes: 2 })
+    expect(mesh.castShadow).toBe(true)
+    expect(mesh.receiveShadow).toBe(true)
+    expect(deep.castShadow).toBe(true)
+    expect(deep.receiveShadow).toBe(true)
+  })
+
+  it('不动点云与线（"仅线框"的覆盖层不该参与阴影）', () => {
+    const root = new Group()
+    const points = new Points()
+    const line = new Line()
+    root.add(points)
+    root.add(line)
+
+    expect(enableModelShadows(root)).toEqual({ meshes: 0 })
+    expect(points.castShadow).toBe(false)
+    expect(line.castShadow).toBe(false)
+  })
+
+  it('空输入不抛错（清空模型时会走到这里）', () => {
+    expect(enableModelShadows(null)).toEqual({ meshes: 0 })
+    expect(enableModelShadows(undefined)).toEqual({ meshes: 0 })
   })
 })
 

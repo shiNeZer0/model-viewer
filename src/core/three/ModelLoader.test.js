@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
-import { createLoadingManager } from './ModelLoader.js'
+import { createLoadingManager, disposeGltfDecoders, getGltfDecoders } from './ModelLoader.js'
 
 /**
  * M6-3：MTL 绝对路径重写的**接线**测试。
@@ -54,5 +54,65 @@ describe('createLoadingManager 的 URL 修饰器', () => {
     const manager = createLoadingManager({})
     expect(manager.resolveURL('tex.png')).toBe('tex.png')
     expect(manager.resolveURL('C:\\tex\\a.png')).toBe('C:\\tex\\a.png')
+  })
+})
+
+/**
+ * 共享解码器：锁住"不再每次加载都重建 worker 池"这个保证。
+ * 一旦退化回每次新建，连续打开压缩模型会静默变慢（功能仍然正常，所以只能靠测试拦）。
+ */
+describe('共享解码器缓存', () => {
+  afterEach(() => {
+    disposeGltfDecoders()
+  })
+
+  it('多次获取返回同一组实例', async () => {
+    const first = await getGltfDecoders()
+    const second = await getGltfDecoders()
+
+    expect(second).toBe(first)
+    expect(second.dracoLoader).toBe(first.dracoLoader)
+    expect(second.ktx2Loader).toBe(first.ktx2Loader)
+  })
+
+  it('并发获取只创建一组（否则会泄漏多份 worker 池）', async () => {
+    const [a, b, c] = await Promise.all([getGltfDecoders(), getGltfDecoders(), getGltfDecoders()])
+
+    expect(a).toBe(b)
+    expect(b).toBe(c)
+  })
+
+  it('释放后缓存清空，下一次重新建立；重复释放是空操作', async () => {
+    const first = await getGltfDecoders()
+    expect(disposeGltfDecoders()).toBe(true)
+    expect(disposeGltfDecoders()).toBe(false)
+
+    const second = await getGltfDecoders()
+    expect(second).not.toBe(first)
+  })
+
+  it('首次拿不到 renderer 时，后续带上 renderer 会补做 KTX2 能力探测（且只做一次）', async () => {
+    const decoders = await getGltfDecoders()
+    expect(decoders.supportDetected).toBe(false)
+
+    const renderer = {
+      isWebGPURenderer: false,
+      extensions: { has: () => false, get: () => null },
+    }
+
+    let detectCalls = 0
+    const originalDetect = decoders.ktx2Loader.detectSupport.bind(decoders.ktx2Loader)
+    decoders.ktx2Loader.detectSupport = (target) => {
+      detectCalls += 1
+      return originalDetect(target)
+    }
+
+    expect(await getGltfDecoders(renderer)).toBe(decoders)
+    expect(detectCalls).toBe(1)
+    expect(decoders.supportDetected).toBe(true)
+
+    // 已探测过就不再重复：连续打开模型不该反复触发 GPU 能力探测
+    await getGltfDecoders(renderer)
+    expect(detectCalls).toBe(1)
   })
 })

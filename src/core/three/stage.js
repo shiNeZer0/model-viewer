@@ -18,7 +18,10 @@ import {
   Color,
   GridHelper,
   Group,
+  Mesh,
+  PlaneGeometry,
   SRGBColorSpace,
+  ShadowMaterial,
   Vector3,
 } from 'three'
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js'
@@ -103,6 +106,7 @@ export class Stage {
 
     this.grid = null
     this.axes = null
+    this.shadowCatcher = null
     this.labelGroup = new Group()
     this.labelGroup.name = 'mv-axis-labels'
 
@@ -113,6 +117,7 @@ export class Stage {
     /** 开关意图（唯一事实源） */
     this.wantGrid = false
     this.wantAxes = true
+    this.wantShadow = false
   }
 
   /** 当前应使用的网格尺寸（模型未知时用默认值） */
@@ -193,9 +198,10 @@ export class Stage {
   /* --------------------------- 辅助显示（网格/坐标轴） --------------------------- */
 
   /** 记录开关意图并立即同步（这是 UI 唯一需要调用的入口） */
-  setHelpers({ showGrid = false, showAxes = true } = {}) {
+  setHelpers({ showGrid = false, showAxes = true, showShadow = false } = {}) {
     this.wantGrid = Boolean(showGrid)
     this.wantAxes = Boolean(showAxes)
+    this.wantShadow = Boolean(showShadow)
     this.syncHelpers()
   }
 
@@ -203,6 +209,7 @@ export class Stage {
   syncHelpers() {
     if (this.wantGrid) this.ensureGrid()
     if (this.wantAxes) this.ensureAxes()
+    if (this.wantShadow) this.ensureShadowCatcher()
 
     if (this.grid) {
       this.grid.visible = this.wantGrid
@@ -212,8 +219,42 @@ export class Stage {
       this.axes.visible = this.wantAxes
       this.axes.position.y = this.groundY
     }
+    if (this.shadowCatcher) {
+      this.shadowCatcher.visible = this.wantShadow
+      this.shadowCatcher.position.y = this.groundY
+      this.applyShadowScale()
+    }
     if (this.labelGroup.parent) this.labelGroup.position.y = this.groundY
     this.labelGroup.visible = this.wantAxes
+  }
+
+  /**
+   * 阴影接收面：一块**只显示阴影、自身完全透明**的平面（`ShadowMaterial`）。
+   * 这是"接地阴影"的标准做法 —— 不必真的往场景里摆一块地板（那会挡住背景与网格），
+   * 却能让模型与地面产生明确的接触关系（否则模型看起来是"飘"着的）。
+   */
+  ensureShadowCatcher() {
+    if (this.shadowCatcher) return this.shadowCatcher
+
+    // 平面默认在 XY 平面，绕 X 轴转 -90° 后朝上（+Y）
+    const geometry = new PlaneGeometry(1, 1)
+    geometry.rotateX(-Math.PI / 2)
+    const material = new ShadowMaterial({ opacity: 0.35, transparent: true })
+
+    this.shadowCatcher = new Mesh(geometry, material)
+    this.shadowCatcher.name = 'mv-shadow-catcher'
+    this.shadowCatcher.receiveShadow = true
+    this.shadowCatcher.position.y = this.groundY
+    this.applyShadowScale()
+    this.scene.add(this.shadowCatcher)
+    return this.shadowCatcher
+  }
+
+  /** 接收面要够大才接得住斜射的影子；用网格尺寸的两倍作为边长 */
+  applyShadowScale() {
+    if (!this.shadowCatcher) return
+    const size = this.effectiveGridSize * 2
+    this.shadowCatcher.scale.set(size, 1, size)
   }
 
   ensureGrid() {
@@ -283,10 +324,19 @@ export class Stage {
     }
   }
 
+  disposeShadowCatcher() {
+    if (!this.shadowCatcher) return
+    this.scene.remove(this.shadowCatcher)
+    this.shadowCatcher.geometry.dispose()
+    this.shadowCatcher.material.dispose()
+    this.shadowCatcher = null
+  }
+
   /** 尺寸变化后重建几何，并**按当前意图**恢复可见性 */
   rebuildHelpers() {
     this.disposeGrid()
     this.disposeAxes()
+    this.disposeShadowCatcher()
     this.syncHelpers()
   }
 
@@ -322,6 +372,7 @@ export class Stage {
     this.disposeGradientTexture()
     this.disposeGrid()
     this.disposeAxes()
+    this.disposeShadowCatcher()
     this.labelGroup.removeFromParent()
     if (this.scene.background?.isTexture) this.scene.background = null
   }

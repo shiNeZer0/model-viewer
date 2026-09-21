@@ -13,6 +13,7 @@ import { useAnimationStore } from '../../stores/animationStore.js'
 import { useDisplayStore } from '../../stores/displayStore.js'
 import { useLightingStore } from '../../stores/lightingStore.js'
 import { useModelStore } from '../../stores/modelStore.js'
+import { usePostFxStore } from '../../stores/postfxStore.js'
 import { useSettingsStore } from '../../stores/settingsStore.js'
 
 const emit = defineEmits(['ready', 'context-lost', 'fps', 'render-error'])
@@ -20,6 +21,7 @@ const emit = defineEmits(['ready', 'context-lost', 'fps', 'render-error'])
 const containerRef = ref(null)
 const settings = useSettingsStore()
 const display = useDisplayStore()
+const postfx = usePostFxStore()
 const model = useModelStore()
 const lighting = useLightingStore()
 const animation = useAnimationStore()
@@ -59,10 +61,24 @@ function applyDisplaySettings() {
   model.setBounds(current.getModelBounds())
 }
 
+/**
+ * 把通道开关与参数推给引擎（唯一事实源是 postfxStore）。
+ * 引擎会自行处理低性能模式对「重」通道的压制，所以这里无脑照推即可。
+ */
+function applyPostFxChannels() {
+  const current = engine.value
+  if (!current) return
+  for (const [id, state] of Object.entries(postfx.channelStates)) {
+    current.setPostFxChannel(id, { enabled: state.enabled, settings: state.settings })
+  }
+}
+
 onMounted(() => {
   try {
     const created = mount(containerRef.value, {
       maxPixelRatio: settings.maxPixelRatio,
+      // 低性能模式必须在建引擎时就知道：antialias 是构造参数，运行时改不了
+      lowPerformance: settings.lowPerformance,
       idleMs: display.idleMs,
       onFps: (fps) => emit('fps', fps),
       onContextLost: () => emit('context-lost'),
@@ -79,6 +95,8 @@ onMounted(() => {
     display.setNotes(warnings)
     // 光照在显示设置之后应用：这样"环境贴图当背景"能拿到刚生成好的纹理
     created.applyLighting(lightingSettings.value)
+    // 后处理通道要在引擎就绪后立刻推一次，否则打开的通道要等用户动一下设置才生效
+    applyPostFxChannels()
     model.setBounds(created.getModelBounds())
     emit('ready', created)
   } catch (error) {
@@ -138,9 +156,6 @@ watch(
 // 模型换了 → 重新抽取层级与包围盒（root 在引擎 setModel 之后才写入 store）
 watch(() => model.root, syncInspection)
 
-// 模型换了 → 重新抽取层级与包围盒（root 在引擎 setModel 之后才写入 store）
-watch(() => model.root, syncInspection)
-
 watch(
   () => [settings.autoRotate, settings.autoRotateSpeed],
   ([enabled, speed]) => engine.value?.setAutoRotate(enabled, speed),
@@ -150,6 +165,19 @@ watch(
   () => settings.maxPixelRatio,
   (value) => engine.value?.setMaxPixelRatio(value),
 )
+
+// 低性能模式：像素比与 MSAA 立即生效（antialias 要等下次建引擎，见 ViewerEngine.setLowPerformance）
+watch(
+  () => settings.lowPerformance,
+  (value) => {
+    engine.value?.setLowPerformance(value)
+    // 档位变化会压制/恢复「重」通道，按 UI 的意图重新推一遍
+    applyPostFxChannels()
+  },
+)
+
+// 通道开关与参数 → 引擎（deep：通道参数是嵌套对象）
+watch(() => postfx.channelStates, applyPostFxChannels, { deep: true })
 </script>
 
 <style scoped>

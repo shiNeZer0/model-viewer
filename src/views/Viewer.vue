@@ -78,6 +78,7 @@
             :webgl-version="rendererInfo.webglVersion"
             :post-fx="rendererInfo.postFx !== false"
             :error-text="renderError ? `${renderError.message}（${renderError.hint}）` : ''"
+            @snapshot="onCopyPerfSnapshot"
           />
 
           <!-- 浮层：动画控制条（底部，仅含动画的模型出现） -->
@@ -154,10 +155,12 @@ import { useAnimationStore } from '../stores/animationStore.js'
 import { useDisplayStore } from '../stores/displayStore.js'
 import { useLightingStore } from '../stores/lightingStore.js'
 import { useModelStore } from '../stores/modelStore.js'
+import { usePostFxStore } from '../stores/postfxStore.js'
 import { useRecentStore } from '../stores/recentStore.js'
 import { useSettingsStore } from '../stores/settingsStore.js'
 import { formatCount } from '../utils/format.js'
 import { describeError } from '../utils/error-messages.js'
+import { formatPerfSnapshot } from '../utils/perf-snapshot.js'
 
 const router = useRouter()
 const model = useModelStore()
@@ -166,6 +169,7 @@ const display = useDisplayStore()
 const lighting = useLightingStore()
 const animation = useAnimationStore()
 const recent = useRecentStore()
+const postfx = usePostFxStore()
 
 // 引擎是重对象：用 shallowRef 只做引用传递，避免被深度代理
 const engineRef = shallowRef(null)
@@ -273,6 +277,7 @@ onMounted(async () => {
     lighting.load(),
     animation.load(),
     recent.load(),
+    postfx.load(),
   ])
   unlistenDrop = await registerDropTarget(stageRef.value)
 })
@@ -308,11 +313,15 @@ function onToggleNodeVisibility(nodeId, visible) {
 function onFocusNode(nodeId) {
   engineRef.value?.focusNode(nodeId)
   model.setSelectedNode(nodeId)
+  // 聚焦同时也要在视口里描出来，否则"选中了哪个"只能靠层级树里那一行高亮
+  engineRef.value?.setSelectedNode(nodeId)
   activeTab.value = 'tree'
 }
 
 function onSelectNode(nodeId) {
   model.setSelectedNode(nodeId)
+  // 选中是"层级树 ↔ 视口"的双向反馈，缺了视口这一半就只是个列表高亮
+  engineRef.value?.setSelectedNode(nodeId)
 }
 
 function onShowAllNodes() {
@@ -398,6 +407,38 @@ useHotkeys(
   },
   { enabled: () => true },
 )
+
+/* --------------------------- 性能快照（M6-7 基准用） --------------------------- */
+
+/**
+ * 把当前渲染开销复制成一段可粘贴的文本。
+ *
+ * 为什么需要它：真机帧率只能人工采集，散落在 HUD/控制台里的数字既难对比也容易抄错。
+ * 有了统一出口，"优化前后"才能逐行比对，而不是靠"感觉这次更流畅"。
+ * 剪贴板失败时回退到控制台——信息必须一定拿得到。
+ */
+async function onCopyPerfSnapshot() {
+  const engine = engineRef.value
+  if (!engine) {
+    ElMessage.warning('渲染器尚未就绪，请稍后重试')
+    return
+  }
+
+  const text = formatPerfSnapshot(engine.getPerfSnapshot())
+  if (!text) {
+    ElMessage.warning('无法生成性能快照')
+    return
+  }
+
+  console.info(text)
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('性能快照已复制到剪贴板')
+  } catch (error) {
+    console.warn('[viewer] 剪贴板不可用，性能快照已打印到控制台', error)
+    ElMessage.warning('剪贴板不可用，性能快照已打印到控制台')
+  }
+}
 
 /* ------------------------------- 引擎回调 ------------------------------- */
 

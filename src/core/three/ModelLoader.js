@@ -70,46 +70,94 @@ export function createLoadingManager({ onProgress, onResourceError, assetMap, to
   return manager
 }
 
-async function createGltfLoader(manager, renderer) {
-  const [{ GLTFLoader }, { DRACOLoader }, { KTX2Loader }, { MeshoptDecoder }] = await Promise.all([
-    import('three/addons/loaders/GLTFLoader.js'),
+/**
+ * DRACO / KTX2 / Meshopt 解码器缓存（模块级单例）。
+ *
+ * 为什么必须复用：`DRACOLoader.dispose()` 会销毁整个 worker 池，KTX2Loader 同理。
+ * 原先每次加载都在 finally 里 dispose，于是**每打开一个模型**都要重新 spawn worker、
+ * 重新实例化 WASM 解码器 —— 连续打开多个压缩模型时每次都要再付一遍这份开销。
+ *
+ * 三点取舍：
+ * 1. 解码器是随应用分发的**静态资源**（`/draco/`、`/basis/`，见 scripts/copy-decoders.mjs），
+ *    加载耗时相对模型文件可忽略，因此这里不绑 LoadingManager、不上报解码器自身的进度；
+ *    共享实例只能绑一个 manager，硬绑会导致"第二次加载用到第一次的进度回调"这类串扰。
+ * 2. `GLTFLoader` 仍每次新建：它持有本次解析的状态（scenes/parser），不适合跨加载共享。
+ * 3. `detectSupport` 需要真实 renderer；首次调用若拿不到 renderer，留到之后补做
+ *    （结果只与 GPU 能力有关，与模型无关）。
+ */
+let gltfDecoderCache = null
+/** 创建中的 Promise：并发调用必须共用同一次创建，否则会各自建出一组 worker 池 */
+let gltfDecoderPending = null
+
+async function createGltfDecoders() {
+  const [{ DRACOLoader }, { KTX2Loader }, { MeshoptDecoder }] = await Promise.all([
     import('three/addons/loaders/DRACOLoader.js'),
     import('three/addons/loaders/KTX2Loader.js'),
     import('three/addons/libs/meshopt_decoder.module.js'),
   ])
 
-  const dracoLoader = new DRACOLoader(manager)
+  const dracoLoader = new DRACOLoader()
   dracoLoader.setDecoderPath(DRACO_DECODER_PATH)
 
-  const ktx2Loader = new KTX2Loader(manager)
+  const ktx2Loader = new KTX2Loader()
   ktx2Loader.setTranscoderPath(KTX2_TRANSCODER_PATH)
-  // KTX2 需要知道当前 GPU 支持哪些压缩格式，缺 renderer 时会退化甚至报错
-  if (renderer) ktx2Loader.detectSupport(renderer)
 
+  return { dracoLoader, ktx2Loader, MeshoptDecoder, supportDetected: false }
+}
+
+/** 取共享解码器（惰性创建；同一进程内复用同一组实例） */
+export async function getGltfDecoders(renderer = null) {
+  if (!gltfDecoderCache) {
+    if (!gltfDecoderPending) {
+      // 创建失败时清掉 pending，让下一次调用可以重试而不是永远拿到同一个失败结果
+      gltfDecoderPending = createGltfDecoders().finally(() => {
+        gltfDecoderPending = null
+      })
+    }
+    gltfDecoderCache = await gltfDecoderPending
+  }
+
+  // KTX2 需要知道当前 GPU 支持哪些压缩格式，缺 renderer 时会退化甚至报错
+  if (renderer && !gltfDecoderCache.supportDetected) {
+    gltfDecoderCache.ktx2Loader.detectSupport(renderer)
+    gltfDecoderCache.supportDetected = true
+  }
+
+  return gltfDecoderCache
+}
+
+/**
+ * 释放共享解码器（引擎销毁时调用）。
+ * 缓存清空后，下一次加载会重新建立 —— 因此它必须与"应用还活着"这个前提绑定。
+ */
+export function disposeGltfDecoders() {
+  if (!gltfDecoderCache) return false
+  gltfDecoderCache.dracoLoader.dispose()
+  gltfDecoderCache.ktx2Loader.dispose()
+  gltfDecoderCache = null
+  return true
+}
+
+async function createGltfLoader(manager, renderer) {
+  const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js')
+  const { dracoLoader, ktx2Loader, MeshoptDecoder } = await getGltfDecoders(renderer)
+
+  // manager 是每次加载特有的（URL 修饰器 + 进度回调），必须绑在本次的 loader 上
   const loader = new GLTFLoader(manager)
   loader.setDRACOLoader(dracoLoader)
   loader.setKTX2Loader(ktx2Loader)
   loader.setMeshoptDecoder(MeshoptDecoder)
 
-  return {
-    loader,
-    dispose() {
-      dracoLoader.dispose()
-      ktx2Loader.dispose()
-    },
-  }
+  return loader
 }
 
 async function loadGltf({ manager, renderer, url, onFileProgress }) {
-  const { loader, dispose } = await createGltfLoader(manager, renderer)
-  try {
-    const gltf = await loader.loadAsync(url, onFileProgress)
-    const root = gltf.scene ?? gltf.scenes?.[0] ?? null
-    if (!root) throw new Error('glTF 中没有可显示的场景')
-    return { root, animations: gltf.animations ?? [], scenes: gltf.scenes ?? [] }
-  } finally {
-    dispose()
-  }
+  const loader = await createGltfLoader(manager, renderer)
+  const gltf = await loader.loadAsync(url, onFileProgress)
+  const root = gltf.scene ?? gltf.scenes?.[0] ?? null
+  if (!root) throw new Error('glTF 中没有可显示的场景')
+  // 解码器是共享的，**不能**在这里释放（见 getGltfDecoders 的说明）
+  return { root, animations: gltf.animations ?? [], scenes: gltf.scenes ?? [] }
 }
 
 async function loadStl({ manager, url, onFileProgress }) {

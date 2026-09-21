@@ -9,7 +9,7 @@
  * 方位/仰角 → 世界坐标的换算抽成纯函数，是这块最容易出错也最容易验证的部分。
  */
 
-import { Color, DirectionalLight, HemisphereLight, Vector3 } from 'three'
+import { Color, DirectionalLight, HemisphereLight, Sphere, Vector3 } from 'three'
 
 import { DEFAULT_PRESET_ID, resolvePreset } from '../../constants/presets/lightingPresets.js'
 
@@ -76,6 +76,46 @@ export function normalizeLight(light = {}, role = 'key') {
 
 /** 环境来源：程序化渐变 / three 自带影棚 / 关闭 / 用户导入的 HDR、EXR */
 export const ENVIRONMENT_SOURCES = ['gradient', 'room', 'none', 'imported']
+
+/**
+ * 给模型树打开投影与接收阴影。
+ *
+ * **必须显式打开**：three 里每个 Object3D 的 `castShadow` / `receiveShadow` 默认都是 `false`，
+ * 只配置光源的 `castShadow` 是不会有任何影子的 —— 这正是"明明配好了阴影却一个都看不到"的经典原因
+ * （本项目就踩过一次：光源侧开了，模型侧没开）。
+ *
+ * 只处理 Mesh / SkinnedMesh：点云与线（含"仅线框"的覆盖层）本就不该参与阴影。
+ * 接收阴影让"部件之间的遮挡"（手臂落在躯干上）也成立，由此产生的自阴影条纹由
+ * `shadow.normalBias` 抑制。
+ *
+ * @returns {{meshes: number}} 处理到的网格数
+ */
+export function enableModelShadows(root) {
+  const report = { meshes: 0 }
+  root?.traverse?.((node) => {
+    if (!node.isMesh && !node.isSkinnedMesh) return
+    node.castShadow = true
+    node.receiveShadow = true
+    report.meshes += 1
+  })
+  return report
+}
+
+/**
+ * 只有主光投影：三盏灯都投影会让影子互相叠加、互相打架，反而看不清形体。
+ */
+export const SHADOW_LIGHT_ROLE = 'key'
+
+/**
+ * 阴影默认参数。
+ * `mapSize` 是开销与清晰度的直接权衡（2048² 在 4K 视口下够用，再大收益很小）；
+ * `bias` / `normalBias` 用来压掉自阴影产生的条纹（shadow acne）。
+ */
+export const SHADOW_DEFAULTS = {
+  mapSize: 2048,
+  bias: -0.0005,
+  normalBias: 0.02,
+}
 
 /** 补全/收敛完整光照状态（按 key/fill/rim 顺序固定三盏） */
 export function normalizeLightingState(state = {}) {
@@ -205,22 +245,47 @@ export class LightingRig {
 
     for (const light of this.lights.values()) scene.add(light)
     scene.add(this.hemisphere)
+
+    /**
+     * 阴影默认关，且**只配在主光上**。
+     *
+     * 注意切换 `castShadow` 会改变 three 计算的 `numDirLightShadows`，而它是 program
+     * cache key 的一部分（与 §36 里 light.visible 的问题同源）—— 所以拨动阴影开关会有
+     * 一次性重编译，这是无法完全避免的；能避免的是**每帧重渲 shadow map**（见引擎侧
+     * 的 shadowNeedsUpdate 标记，静态场景只在真的变了才重渲）。
+     */
+    this.shadowEnabled = false
+    const keyLight = this.lights.get(SHADOW_LIGHT_ROLE)
+    keyLight.castShadow = false
+    keyLight.shadow.mapSize.set(SHADOW_DEFAULTS.mapSize, SHADOW_DEFAULTS.mapSize)
+    keyLight.shadow.bias = SHADOW_DEFAULTS.bias
+    keyLight.shadow.normalBias = SHADOW_DEFAULTS.normalBias
   }
 
-  /** 应用光照状态（幂等，可反复调用） */
+  /**
+   * 应用光照状态（幂等，可反复调用）。
+   *
+   * **关闭某盏灯用 `intensity = 0`，而不是 `visible = false`。**
+   * three 的 `WebGLRenderer.projectObject` 会跳过 `visible === false` 的对象，该灯就不再
+   * 进入 `lights.directional`；而 program cache key 里带着 `numDirLights`（见 WebGLPrograms），
+   * 数量一变，**所有材质都要重新编译 shader** —— 表现为拨一次光源开关卡一下，材质越多越明显。
+   * 改成 intensity = 0 后，着色器里的 color 已被乘成 0（WebGLLights 里
+   * `uniforms.color.copy( light.color ).multiplyScalar( light.intensity )`），贡献同样是 0，
+   * 视觉等价，但光源数量恒定，program key 不变，不再触发重编译。
+   */
   apply(state) {
     const normalized = normalizeLightingState(state)
 
-    this.hemisphere.visible = normalized.ambient.enabled
-    this.hemisphere.intensity = normalized.ambient.intensity
+    this.hemisphere.visible = true
+    this.hemisphere.intensity = normalized.ambient.enabled ? normalized.ambient.intensity : 0
     this.hemisphere.color.set(normalized.ambient.skyColor)
     this.hemisphere.groundColor.set(normalized.ambient.groundColor)
 
     for (const role of LIGHT_ROLES) {
       const light = this.lights.get(role.id)
       const config = normalized.lights.find((item) => item.role === role.id)
-      light.visible = config.enabled
-      light.intensity = config.intensity
+      light.visible = true
+      light.intensity = config.enabled ? config.intensity : 0
       light.color.set(config.color)
       light.position.set(...computeLightPosition(config))
       light.updateMatrixWorld()
@@ -229,10 +294,65 @@ export class LightingRig {
     return normalized
   }
 
-  /** 当前是否有任何启用的光源（全关时给 UI 提示用） */
+  /**
+   * 开/关阴影（只作用于主光）。
+   *
+   * 幂等：重复设同一个值不会产生额外开销（three 的 program 参数没变就命中缓存），
+   * 因此调用方可以放心地"每次都同步"，而不必自己判断有没有变化。
+   * @returns {boolean} 当前状态
+   */
+  setShadowEnabled(enabled) {
+    const next = Boolean(enabled)
+    this.shadowEnabled = next
+    const light = this.lights.get(SHADOW_LIGHT_ROLE)
+    if (light) light.castShadow = next
+    return next
+  }
+
+  /**
+   * 按模型包围盒适配主光的阴影相机。
+   *
+   * 方向光的阴影相机是**正交相机**，范围写死会有两种典型故障：模型稍大就"影子缺一半"，
+   * 反之模型只占贴图一小块、阴影边缘全是锯齿。所以模型一变（加载/摆放/轴向）就要重算。
+   *
+   * 刻意**不动 `light.target`**：它决定光照方向，改靶心等于悄悄改了打光（项目定位是忠实
+   * 呈现模型，不该有这种意外变化）。代价是视锥要以原点为中心去覆盖"偏心的包围球"，
+   * 因此范围要把中心偏移量算进去。
+   *
+   * @returns {{radius: number, extent: number, distance: number}|null}
+   */
+  fitShadowCamera(box) {
+    const light = this.lights.get(SHADOW_LIGHT_ROLE)
+    if (!light || !box || box.isEmpty?.()) return null
+
+    const sphere = box.getBoundingSphere(new Sphere())
+    const radius = Math.max(sphere.radius, 1e-3)
+    const centerOffset = sphere.center.length()
+
+    // 视锥中心在光照方向（指向原点）上，所以覆盖半径 = 包围球半径 + 球心偏离原点的量
+    const span = radius + centerOffset
+    const extent = span * 1.1
+    const distance = Math.max(light.position.length(), extent)
+
+    const camera = light.shadow.camera
+    camera.left = -extent
+    camera.right = extent
+    camera.top = extent
+    camera.bottom = -extent
+    camera.near = Math.max(distance - span * 1.2, 0.01)
+    camera.far = distance + span * 1.2
+    camera.updateProjectionMatrix()
+
+    return { radius: extent, extent, distance }
+  }
+
+  /**
+   * 当前有几盏灯真的在贡献光照。
+   * 判据用 `intensity > 0` 而非 `visible`：关闭的灯现在靠强度归零表达（见 apply）。
+   */
   get enabledCount() {
     let count = 0
-    for (const light of this.lights.values()) if (light.visible) count += 1
+    for (const light of this.lights.values()) if (light.intensity > 0) count += 1
     return count
   }
 
