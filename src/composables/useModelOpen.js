@@ -109,8 +109,16 @@ export function useModelOpen(engineRef) {
       // 入场动画在"上屏 + 状态就绪"之后才播：此时加载遮罩已开始移除，动画全程可见。
       // 即使它被跳过（系统「减少动效」/位姿不可用），setModel 的瞬时适配也已把相机摆正。
       engine.playEntranceAnimation()
-      // loader 侧产生的提示（缺 MTL、3MF 单位说明等）一并展示
+      // loader 侧产生的提示（缺 MTL、3MF 单位说明、FBX 的降级告警等）一并展示
       for (const warning of result.warnings ?? []) model.addWarning(warning)
+      /*
+       * 文件自己声明的单位（目前只有 FBX 会声明）：预选「模型单位」。
+       * 这是"尺寸明显不对"最常见的根因 —— 导出器按厘米/毫米写数值，界面却按米读。
+       * 只在文件确实声明且能识别时才动；识别不出来就保持用户原来的选择。
+       */
+      if (result.meta?.sourceUnit) {
+        await display.update('sourceUnit', result.meta.sourceUnit)
+      }
       // 着色模式相关的提示（如「模型过大已跳过线框」）交给显示面板展示
       if (shadeWarnings?.length) display.setNotes(shadeWarnings)
 

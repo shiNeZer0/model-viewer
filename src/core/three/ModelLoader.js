@@ -13,9 +13,9 @@ import { Group, LoadingManager, Mesh } from 'three'
 import { resolveFormatById } from '../../constants/formats.js'
 import { rawErrorMessage } from '../../utils/error-messages.js'
 import { disposeObject3D } from './disposal.js'
-import { EXTRA_FORMAT_LOADERS } from './formatLoaders.js'
+import { describeFbxError } from './fbxCompat.js'
+import { EXTRA_FORMAT_LOADERS, normalizeReferenceUrl } from './formatLoaders.js'
 import { createDefaultMaterial } from './materialNormalizer.js'
-import { normalizeReferenceUrl } from './formatLoaders.js'
 
 /**
  * 解码器目录必须是**绝对 URL**：DRACOLoader / KTX2Loader 会在 blob URL 的 worker 里
@@ -177,7 +177,10 @@ export async function loadModel({
       result = await loadGltf({ manager, renderer, url, onFileProgress })
     }
   } catch (error) {
-    throw new Error(`LOAD_FAILED: ${rawErrorMessage(error)}`)
+    // FBX 的失败原因常常很"技术"（版本门槛、损坏、非 FBX 内容），这里换成可操作的说明；
+    // 其它格式保持原始信息，避免编造原因
+    const detail = format.id === 'fbx' ? describeFbxError(error) : rawErrorMessage(error)
+    throw new Error(`LOAD_FAILED: ${detail}`)
   }
 
   if (token?.cancelled) {

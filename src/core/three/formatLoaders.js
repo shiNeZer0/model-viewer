@@ -16,6 +16,7 @@
 
 import { Group, Mesh } from 'three'
 
+import { collectLoaderWarnings, describeFbxUnit, ensureUsableMaterials, readFbxUnitScale } from './fbxCompat.js'
 import { createDefaultMaterial } from './materialNormalizer.js'
 import { resolveAssetUrl } from './url-rewrite.js'
 
@@ -131,13 +132,39 @@ function applyDefaultMaterial(root) {
   })
 }
 
-/** FBX：材质是 MeshPhongMaterial，three 可直接渲染；动画在 group.animations 上 */
+/**
+ * FBX：材质多为 MeshPhongMaterial，动画在 `group.animations` 上。
+ *
+ * three 的 FBXLoader 对不少情况是**静默降级**（贴图通道不支持、多层贴图只留第一层、
+ * 一个骨骼挂多个几何体、Z-up 自动旋转……），只在 console 里 warn 一句。
+ * 这里把它的告警接管成界面提示，并补上两件它不做的事：单位识别（UnitScaleFactor → 模型单位）
+ * 与材质兜底（PBR 材质解析失败会变成纯黑）。
+ */
 export async function loadFbx({ manager, url }) {
   const { FBXLoader } = await import('three/addons/loaders/FBXLoader.js')
   const loader = new FBXLoader(manager)
-  const root = await loader.loadAsync(url)
+
+  const { result: root, warnings } = await collectLoaderWarnings(() => loader.loadAsync(url))
   const animations = Array.isArray(root?.animations) ? root.animations : []
-  return { root, animations, scenes: [], warnings: [] }
+
+  const { replaced } = ensureUsableMaterials(root)
+  if (replaced > 0) {
+    warnings.push(
+      `有 ${replaced} 个网格没有可用材质（three 的 FBX 加载器只支持 Lambert/Phong 材质，PBR 材质会缺失），已改用默认黏土材质`,
+    )
+  }
+
+  const unit = describeFbxUnit(readFbxUnitScale(root))
+  if (unit) warnings.push(unit.hint)
+
+  return {
+    root,
+    animations,
+    scenes: [],
+    warnings,
+    // 上层据此预选「模型单位」（见 useModelOpen）
+    meta: unit ? { sourceUnit: unit.sourceUnit } : null,
+  }
 }
 
 /** OBJ：先尝试同目录同名 .mtl，失败则降级为默认材质并提示 */
