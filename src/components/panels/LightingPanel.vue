@@ -206,6 +206,8 @@ import { describeError } from '../../utils/error-messages.js'
 import LightSourceEditor from './LightSourceEditor.vue'
 
 const lighting = useLightingStore()
+// 光源可视化开关存在 displayStore（与网格/坐标轴/边界框同属"视口辅助"）
+const display = useDisplayStore()
 const themeName = ref('')
 const saving = ref(false)
 const importingEnv = ref(false)
