@@ -1,14 +1,21 @@
 <template>
   <div class="viewer-toolbar">
     <el-button-group>
-      <el-button type="primary" :loading="loading" @click="emit('open')">打开模型</el-button>
-      <el-button :disabled="!hasModel" @click="emit('fit')">适配视图</el-button>
-      <el-button :disabled="!hasModel" @click="emit('reset')">重置视图</el-button>
+      <el-button type="primary" :loading="loading" @click="emit('open')">
+        <el-icon><IconFolderOpen /></el-icon><span>打开模型</span>
+      </el-button>
+      <el-button :disabled="!hasModel" @click="emit('fit')">
+        <el-icon><IconFitScreen /></el-icon><span>适配视图</span>
+      </el-button>
+      <el-button :disabled="!hasModel" @click="emit('reset')">
+        <el-icon><IconRestartAlt /></el-icon><span>重置视图</span>
+      </el-button>
     </el-button-group>
 
     <el-dropdown :disabled="!hasModel" @command="emit('view-preset', $event)">
       <el-button :disabled="!hasModel">
-        视图：{{ currentPresetLabel }}<span class="viewer-toolbar__caret">▾</span>
+        <el-icon><IconViewInAr /></el-icon>
+        <span>视图：{{ currentPresetLabel }}<span class="viewer-toolbar__caret">▾</span></span>
       </el-button>
       <template #dropdown>
         <el-dropdown-menu>
@@ -21,7 +28,8 @@
 
     <el-dropdown @command="emit('shading-mode', $event)">
       <el-button>
-        着色：{{ currentShadeLabel }}<span class="viewer-toolbar__caret">▾</span>
+        <el-icon><IconPalette /></el-icon>
+        <span>着色：{{ currentShadeLabel }}<span class="viewer-toolbar__caret">▾</span></span>
       </el-button>
       <template #dropdown>
         <el-dropdown-menu>
@@ -34,7 +42,8 @@
 
     <el-dropdown :disabled="!hasModel" @command="emit('screenshot', Number($event))">
       <el-button :disabled="!hasModel">
-        截图<span class="viewer-toolbar__caret">▾</span>
+        <el-icon><IconPhotoCamera /></el-icon>
+        <span>截图<span class="viewer-toolbar__caret">▾</span></span>
       </el-button>
       <template #dropdown>
         <el-dropdown-menu>
@@ -64,7 +73,9 @@
       </span>
     </el-tooltip>
 
-    <el-button text @click="emit('settings')">设置</el-button>
+    <el-button text @click="emit('settings')">
+      <el-icon><IconSettings /></el-icon><span>设置</span>
+    </el-button>
   </div>
 </template>
 
@@ -74,6 +85,13 @@ import { computed } from 'vue'
 import { SCREENSHOT_SCALES } from '../../core/screenshot.js'
 import { SHADE_MODES, resolveShadeMode } from '../../core/three/shadeModes.js'
 import { VIEW_PRESETS, resolveViewPreset } from '../../core/three/viewPresets.js'
+import IconFitScreen from '~icons/material-symbols/fit-screen'
+import IconFolderOpen from '~icons/material-symbols/folder-open'
+import IconPalette from '~icons/material-symbols/palette'
+import IconPhotoCamera from '~icons/material-symbols/photo-camera'
+import IconRestartAlt from '~icons/material-symbols/restart-alt'
+import IconSettings from '~icons/material-symbols/settings'
+import IconViewInAr from '~icons/material-symbols/view-in-ar'
 
 const props = defineProps({
   hasModel: { type: Boolean, default: false },

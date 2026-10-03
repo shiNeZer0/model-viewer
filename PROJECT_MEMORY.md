@@ -223,6 +223,100 @@
 【推送要点（复现用）】push 必须 `sandbox_permissions: danger-full-access`：受限沙箱下 ssh 经 sh.exe 包装会报 `couldn't create signal pipe, Win32 error 5`。本次用 `$env:GIT_SSH_COMMAND = 'ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20'` 加 `git push`，一次成功。**git commit 的 -m 消息避开 ASCII 双引号**（PowerShell 会拆成 pathspec），多段内容用多个 -m 传。
 
 【仍未做（用户侧真机验收）】① 阴影是否真的出现（本次刚修的 bug，需用户确认）；② 五个后处理通道的实际画面与兼容性（AO/泛光在半透明背景与「仅线框」下是否异常）；③ 用 §29.4 基准测 GTAO 默认开的性能代价 —— 这是"效果优先"的代价，数字仍缺；④ §36.6 与 §37.6 里列出的其余人工确认项。
+- [2026-10-03 16:27] [工作记录] 外壳改为悬浮覆盖层（侧栏默认折叠、工具栏常驻，未提交）：Viewer.vue 布局重写 + §38 — model-viewer 外壳改为悬浮覆盖层（侧栏可折叠且**默认收起**、工具栏常驻）——**尚未 git 提交**。
+
+【改动】`src/views/Viewer.vue`（模板与布局样式整体重写：去掉 el-container / el-header / el-main / el-aside，改为 `div.viewer` + `.viewer__stage{position:absolute;inset:0}` + 悬浮 `.viewer__toolbar` + 悬浮 `.viewer__aside` + **独立**的 `.viewer__aside-toggle`）；`src/style.css` 新增 `--viewer-toolbar-height: 52px`；`src/components/viewer/InfoHud.vue` 的 top 改为 `calc(var(--viewer-toolbar-height) + 10px)` 让开工具栏；`docs/设计文档.md` 新增 §38。
+
+【默认状态（用户明确要求）】侧栏**默认收起**：`asideCollapsed` 初值 `true`，进入查看器先让画布吃满窗口，需要时点右边缘按钮展开。状态是**会话级、不持久化**，因此每次打开应用都是默认收起；会话内展开后切到设置页再回来仍保持（keep-alive 缓存）。
+
+【关键决策】① 折叠用 `transform: translateX()` 而非动画 width（宽度动画每帧触发布局，旁边有 WebGL 画布在渲染）；② 折叠按钮**独立于侧栏**、收起后回到屏幕右边缘（若放进侧栏内部，收起即失去再次打开的入口）；③ 收起时同时 `opacity:0` + `pointer-events:none`（否则透明区域仍拦截画布鼠标操作，表现为拖不动模型）；④ 让位量集中成一个 CSS 变量；⑤ 画布 `absolute inset:0` → 折叠侧栏**不再触发画布 resize**，顺带避开后处理 applySize 重建 render target 的那条路径。
+
+【验证】vitest 498/498（42 文件）、`scripts/diagnose-sfc.cjs` 15/15（Viewer.vue 绑定 96 个）、`pnpm build` 成功。未跑 cargo test（零 Rust 改动）。
+
+【待真机确认】① 默认收起时右边缘按钮可见且可点开；② 工具栏「设置」按钮靠右（本轮修掉的回归）；③ 亮色主题浮层可读性；④ InfoHud 是否完全避开工具栏；⑤ `backdrop-filter` 在横跨全宽工具栏上的性能代价（掉帧则去掉这两处 blur）。
+
+【提交状态】累积**三批**未提交改动：§38 悬浮布局 + §39 点设置模型丢失修复 + 本次默认折叠。用户尚未要求提交推送。
+- [2026-10-03 16:34] [工作记录] 修复点设置后模型丢失（未提交）：根因是路由卸载触发引擎 dispose，改用 keep-alive 缓存查看器 + §39 — model-viewer 修复"点设置后模型丢失"（**尚未 git 提交**）。
+
+【根因（路由层，非渲染层）】`App.vue` 原本是裸的 `<router-view />`，`/` 与 `/settings` 是独立路由 → 跳转时 `Viewer` 组件被**卸载** → `useViewerEngine` 的 `onBeforeUnmount` → `engine.dispose()` → `disposeObject3D(currentRoot)` 释放模型资源；返回时重建的是空引擎。**这是既有问题**（路由自 M0 起如此设计），不是 §38 布局重构引入的，布局改动只是让入口更容易被点到。
+
+【修复】`App.vue` 用 `<router-view v-slot="{ Component }"><keep-alive :include="['Viewer']"><component :is="Component" /></keep-alive></router-view>`（只缓存查看器，不缓存设置页）。另有三处配套，缺一不可：① `Viewer.vue` 加 `defineOptions({ name: 'Viewer' })`（include 按组件名匹配，显式声明避免改名后静默失效）；② `ViewerEngine` 新增 `suspend()`/`resume()`，并让 `handleResize` 与 `ResizeObserver` 在 suspended 时直接返回（隐藏期间画布尺寸报 0，否则会把 render target 缩到 1×1、返回时再放大，白重建两遍 GPU 资源；`resume` 里必须先清 `lastResizeKey` 否则重算被短路挡掉）；③ Viewer.vue 新增 `isActive` ref，`useHotkeys` 的 `enabled` 由 `() => true` 改为 `() => isActive.value`（快捷键监听在 window 上，与视图可见性无关）。
+
+【验证】vitest 498/498（42 文件）、`scripts/diagnose-sfc.cjs` 15/15（Viewer.vue 绑定 96 个）、`pnpm build` 成功（453ms）。未跑 cargo test（零 Rust 改动）。文档见 §39。
+
+【待真机确认】① 点设置再返回模型仍在且**瞬间恢复**（无需重新加载文件）；② 在设置页按 f/1/s 等快捷键无任何反应；③ 返回后画布尺寸正常、侧栏折叠状态保持。
+
+【提交状态】累积两批未提交改动：§38 悬浮覆盖层布局 + §39 本修复。用户尚未要求提交推送。
+- [2026-10-03 16:42] [工作记录] 选中描边改橙红并补「清除高亮」（未提交）：新增 selection.js + 修掉 el-tree 空串静默失败 + §40 — model-viewer 选中高亮两项改动（**尚未 git 提交**）：
+
+【1. 描边改橙红】`src/core/three/postfx/outline.js`：`OUTLINE_VISIBLE_COLOR` 由蓝 `#7fb2ff` 改为橙红 `#ff6b35`，`OUTLINE_HIDDEN_COLOR`（被遮挡部分）由 `#2a3f66` 改为同色相压暗的 `#8a3419`。原先的注释"与线框覆盖层同色系，保证选中与线框是一套语言"已**反向更新**：橙色选中 + 蓝色线框（`shadeModes.js` 的 `OVERLAY_COLOR`）色相拉开，两者同时出现才分得清哪个是被选中的节点。
+
+【2. 补上「清除高亮」】此前选中是单向的（只能改选另一个节点，无法回到"什么都没选"）。新增两个等价入口：工具栏「清除高亮」按钮（未选中时禁用）+ **再次点击已选中的那个节点**。判定抽成纯函数 `src/core/selection.js` 的 `resolveNodeClick(currentId, clickedId)`（再次点击同一节点返回空串）并配 `selection.test.js`。`Viewer.onSelectNode` 无需改动 —— 它本来就把空 id 当"清除"（`nodeId ? ... : null`）。
+
+【3. 顺带修掉的 Element Plus 坑（关键）】清除后描边消失但**列表那一行高亮残留**。根因：el-tree 的 `setCurrentNodeKey('')` 既不是 `null`/`undefined`（不进清除分支），又找不到 key 为 `''` 的节点（`if (node)` 不进设置分支）→ **静默什么都不做**。修法：绑定处映射空值，`:current-node-key="selectedId || null"`（`modelStore` 仍用 `''` 表示无选中，转换只在这一处）。
+
+【验证】vitest **501/501（43 文件）**、`scripts/diagnose-sfc.cjs` 15/15、`pnpm build` 成功（461ms）。未跑 cargo test（零 Rust 改动）。
+
+【待真机确认】① 描边是橙红且清晰，与线框（`W` 键）同时开启时不混淆；② 三个清除路径都生效且**列表与视口一起**变干净（工具栏按钮 / 再次点击同一节点 / 切换模型）；③ 被遮挡部分的暗橙红描边深浅是否合适。
+
+【提交状态】累积**四批**未提交：§38 悬浮布局 + §39 点设置模型丢失修复 + 侧栏默认折叠 + §40 本次高亮改动。
+- [2026-10-03 16:51] [工作记录] 引入 Iconify/Material Symbols 图标（未提交）：unplugin-icons 编译期按需 +6KB，覆盖查看器全部高频按钮 + §41 — model-viewer 引入图标库（Iconify / Material Symbols）给高频按钮加图标（**尚未 git 提交**）。
+
+【选型】`unplugin-icons` + `@iconify-json/material-symbols`（均 devDependencies），配置只有 `vite.config.js` 一行 `Icons({ compiler: 'vue3' })`。**刻意不用 Iconify 运行时 API**（桌面版必须离线）也**不用 `addCollection(整集)`**（会把数千图标打进安装包）。`~icons/material-symbols/xxx` 在编译期变成 Vue 组件，只打包真正 import 的那几个。
+
+【体积实测】`Viewer-*.js` 482 → **488 KB（+6 KB）**，`index-*.js` 未增。
+
+【覆盖范围】工具栏（打开/适配/重置/视图/着色/截图/设置）、层级面板（显示/隐藏/重置/清除高亮/聚焦）、动画条（播放/暂停/停止）、信息浮层（展开/关闭/复制快照）、加载遮罩（取消）、空状态（打开模型）、最近文件（清空/移除）、显示面板（通道重置/恢复默认）、光照面板（导入/移除/保存主题/主题行三动作）。**顺带把动画条原本手写的内联 SVG 播放/暂停/停止换成了图标库同一来源**。
+
+【窄容器决策】侧栏仅 340px，层级面板工具栏与光照主题表格操作列（152px 放 3 个动作）改用**纯图标 + tooltip**（「图标+文字」会溢出）；每个纯图标位置都配了 tooltip 保可发现性。
+
+【⚠️ 非预期变更（需真机确认）】`pnpm add` 把范围内依赖解析到最新：`element-plus` 2.13.7 → **2.14.5**、`vue` 3.5.32 → **3.5.42**、`vite` 8.0.4 → **8.3.0** 等（均符合原 `^` 范围）。全量测试通过，但 Element Plus 次版本升级的组件外观/行为需真机看一眼。
+
+【验证】vitest **501/501（43 文件）**、`scripts/diagnose-sfc.cjs` 15/15、`pnpm build` 成功（653ms，全部图标名解析通过）。未跑 cargo test（零 Rust 改动）。文档见 §41。
+
+【待真机确认】① 纯图标按钮 tooltip 是否都可弹出、语义是否一眼可懂；② **窄窗口（~900px 以下）工具栏是否拥挤**（加图标后总宽度增加，最可能出问题处）；③ 亮色主题下图标对比度；④ Element Plus 升级后的组件外观。
+
+【提交状态】累积**五批**未提交：§38 悬浮布局 + §39 点设置模型丢失修复 + 侧栏默认折叠 + §40 选中高亮改动 + §41 图标库。
+- [2026-10-03 16:54] [工作记录] 层级树聚焦改为平滑过渡（未提交）：补 animate:true；发现「适配视图」仍是瞬移待定 + §42 — model-viewer 层级树「聚焦」改为平滑过渡（**尚未 git 提交**）。
+
+【改动】`ViewerEngine.focusNode()` 给 `fitToObject` 补上 `animate: true`（`src/core/three/ViewerEngine.js`）。此前它走默认的瞬时落位路径，点「聚焦」时视角是"跳"过去的。时长沿用 `DEFAULT_TWEEN_MS = 320ms`，与「切换视图预设」一致。
+
+【根因：不是默认值问题，是漏传参数】`fitToObject` 的 `animate` 默认 `false` 是**刻意**的（加载模型、重新摆放、尺寸变化这类程序化路径必须立刻到位）。所以问题在于"聚焦"这个**用户主动**的视角跳转当时没显式传 `animate: true`。
+
+【机制本来就有、无需额外处理】① 系统开启「减少动效」偏好时 `animateCameraTo` 会自动退回瞬时；② 连续点不同节点不会排队，新补间直接接管上一个。
+
+【顺带发现的不一致（**未改，待用户决定**）】同一界面三条同类操作，两条瞬移一条有动画：
+- 聚焦节点（层级树按钮）→ 本次已改平滑
+- **适配视图（工具栏按钮 / `F` 键）→ 仍瞬移**（`useModelOpen.fitView()` 调 `fitToObject()` 时同样没传 animate）
+- 重置视图（工具栏 / `R` 键）→ 有动画（走 `setViewPreset`，默认 `animate: true`）
+建议一并改（只差一个参数，否则同一工具栏两个按钮一个跳一个滑）。
+
+【验证】vitest 501/501（43 文件）、`scripts/diagnose-sfc.cjs` 15/15、`pnpm build` 成功（571ms）。未跑 cargo test（零 Rust 改动）。文档见 §42。
+注：这是"接线"性质的改动（把已有参数传下去），`ViewerEngine` 需 WebGL 上下文、无单测覆盖，观感只能真机确认。
+
+【待真机确认】① 聚焦过渡是否顺畅、**聚焦到很远的节点时 320ms 是否偏快**（跨度大可按时长自适应，`cameraTween.js` 备有 `MIN_TWEEN_MS=80`/`MAX_TWEEN_MS=2000`）；② 连续聚焦多节点是否被新补间干净接管；③ 开「减少动效」时是否瞬时到位。
+
+【提交状态】累积**六批**未提交：§38 悬浮布局 + §39 点设置模型丢失修复 + 侧栏默认折叠 + §40 选中高亮改动 + §41 图标库 + §42 聚焦动画。
+- [2026-10-03 17:00] [工作记录] 层级列表可见性开关改图标（未提交）：el-switch→图标按钮，状态用三重信号表达 + §43 — model-viewer 层级列表的可见性开关改为图标（**尚未 git 提交**）。
+
+【改动】`src/components/panels/ModelTreePanel.vue`：每行右侧的 `el-switch` 换成**图标按钮**（`visibility` / `visibility-off`，两个名字此前已验证存在），与左侧「聚焦」图标按钮成为同一套。
+
+【理由（与 §41.3 的窄容器决策同源）】`el-switch` **每行都占固定宽度**，而这一列本来就要和长模型名抢空间（§40 那轮修过的"长名字挤掉操作按钮"）。图标按钮更窄，视觉上也与相邻的「聚焦」统一。
+
+【状态表达：换了控件必须补偿可辨性 —— 三重信号】
+① 图标形状：实心眼睛（可见）/ 划掉的眼睛（隐藏）；
+② 按钮颜色：用 Element Plus 的 `type`，可见 `default`、隐藏 `info`（灰）—— **用 `type` 而不是自定义 CSS**，既符合项目"复用 Element Plus 组件"的规范，也不必和它的样式特异性较劲；
+③ 节点名：原有的 `tree-node__label--hidden`（删除线 + 变灰）保持不变。
+
+【接口未变】点击回调从 `@update:model-value` 的 `$event` 改为显式取反（`!data.visible`），对外的 `toggle-visibility(nodeId, visible)` 事件签名不变，上层 `Viewer.onToggleNodeVisibility` 一行未动。
+
+【验证】vitest 501/501（43 文件）、`scripts/diagnose-sfc.cjs` 15/15、`pnpm build` 成功（597ms）。未跑 cargo test（零 Rust 改动）。文档见 §43。
+
+【待真机确认】① 可见/隐藏两态的图标是否一眼可辨（尤其**隐藏态在深色主题下的灰**）；② 点图标只切可见性、**不会顺带选中该节点**（`@click.stop` 仍在，需实测）；③ 长模型名下两个图标按钮的排布。
+
+【仍待用户决定】「适配视图」（工具栏 / `F` 键）仍是瞬移，而「重置视图」有动画 —— 同一工具栏两个按钮行为不一致，改法只差一个参数（见 §42.2）。
+
+【提交状态】累积**七批**未提交：§38 悬浮布局 + §39 点设置模型丢失修复 + 侧栏默认折叠 + §40 选中高亮 + §41 图标库 + §42 聚焦动画 + §43 可见性开关图标化。
 
 ## 经验教训 Lessons Learned
 
@@ -525,6 +619,69 @@ $i.ToBitmap().Save("installer-icon.png", [System.Drawing.Imaging.ImageFormat]::P
 **教训**：凡是"按变化量触发副作用"的地方，必须同时保证**初始状态被应用过一次**（在 constructor 里显式同步），或者改成幂等的无条件同步。这里两者都做了：constructor 显式调一次 + applyDisplaySettings 改为每次幂等同步（只把"打重渲标记"留给变化判断）。`setShadowEnabled` 本身幂等（three 的 program 参数没变就命中缓存），所以无条件调用没有额外代价。
 
 【排障经验】像"配置了但什么也没发生"这类问题，最有效的手段是把链路两侧的状态**暴露到可一键复制的诊断输出里**。本轮给性能快照的 shadow 段加了 `lightCasts`（主光是否投影）与 `catcher`（接收面是否可见），下次一眼就能分辨是光源侧还是接收侧的问题，不必再读一遍代码。
+- [2026-10-03 16:27] [经验教训] 搬进 flex 容器会静默改变子元素宽度语义；折叠式悬浮面板的四个必须点 — model-viewer 做悬浮覆盖层布局时确认的两条可复用结论：
+
+【1】把组件从 block 容器的子元素挪进 flex 容器，会**静默改变它的宽度语义**。`ViewerToolbar` 根元素是 `display:flex`，内部靠一个 `flex:1` 的 spacer 把「设置」按钮推到最右；原先它在 block 容器（`el-header`）里作为 block-level flex container **自动撑满宽度**，搬进 `display:flex` 的覆盖层容器后变成 flex item，**宽度只由内容决定** → spacer 分不到空间、按钮不再靠右（无报错、纯视觉回归）。修法：在容器上声明 `.parent > * { flex: 1; min-width: 0 }`。**适用范围**：任何"把已有组件从普通文档流搬进 flex/grid 容器"的重构，都要重新确认它的宽度是"撑满"还是"由内容决定"。
+
+【2】折叠式悬浮面板的四个必须点：① 用 `transform: translateX()` 而不是动画 `width`（宽度动画每帧触发布局，而面板旁边通常正有画布/图表在渲染）；② **开关按钮必须独立于面板**并停在收起后仍可见的位置 —— 放进面板内部的话，一收起按钮跟着移出屏幕，就再也没有入口打开它；③ 收起时同时 `opacity:0` + `pointer-events:none`，否则那块透明区域仍会拦截下层交互；④ 让位偏移量（如工具栏高度）集中成一个 CSS 变量，避免多个文件各写一遍。**附带好处**：面板浮在画布之上时折叠它**不改变画布尺寸**，因此不会触发 renderer 尺寸重算（后处理那条路径在尺寸变化时会重建 render target）。
+- [2026-10-03 16:34] [经验教训] keep-alive 缓存持有重资源的视图：显式组件名、拦住隐藏期的 0 尺寸、resume 清短路键、关停 window 级监听 — model-viewer 用 keep-alive 缓存"持有重资源的视图"（WebGL 引擎）时确认的四个必须点，缺任一条都会留下静默缺陷：
+
+【1】`include` 按**组件名**匹配，而组件名可能是"推断"出来的。Vue 能从文件名推断 name，但重命名文件后 `include` 会**静默失配** → keep-alive 不再生效 → 视图退化为卸载重建。表现正是被修的那个 BUG（模型丢失），极难定位。**做法：显式 `defineOptions({ name: 'Viewer' })`**。
+
+【2】视图被隐藏时，它的容器尺寸会报 0，**必须拦住尺寸响应**。否则渲染引擎会把 render target 缩到 1×1、返回时再放大，**白重建两遍 GPU 资源**（4K + MSAA 下不便宜）。做法：引擎加 `suspend()`/`resume()`，并让 `handleResize` 与 ResizeObserver 回调在 suspended 时直接返回。
+
+【3】**`resume()` 里必须先清掉尺寸短路键**（`lastResizeKey = null`）。因为隐藏期间尺寸是 0，恢复时若不强制清键，那次重算会被 `handleResize` 的"尺寸没变就返回"短路挡掉，画布就停在错误尺寸上。这是【2】的必然配套，很容易漏。
+
+【4】**挂在 `window` 上的监听与视图可见性无关，必须显式关停**。典型是全局快捷键：视图被缓存后组件不卸载，监听仍在，于是在别的页面按 `1`/`f`/`s` 会静默作用到看不见的画布上。做法：加 `isActive` ref，`onDeactivated`/`onActivated` 切换它，并把它接进监听的 `enabled` 判定。
+
+**适用范围**：任何用 `keep-alive` 缓存"持有副作用资源"的视图（WebGL 上下文、定时器/轮询、window/document 级监听、WebSocket）。反过来，**纯表单类视图不值得缓存**（重新挂载没有代价），所以 `include` 应只列真正需要保留状态的视图。
+- [2026-10-03 16:43] [经验教训] el-tree 的 setCurrentNodeKey 对空串静默无操作（只认 null/undefined）；受控 key 组件的空值语义要按源码核对 — model-viewer 修掉的一个 Element Plus 静默失败坑，以及它代表的通用教训：
+
+【具体事实】Element Plus 的 `el-tree` 里，`setCurrentNodeKey` 对**空串**是静默无操作：
+```js
+watch(() => props.currentNodeKey, (newVal) => store.setCurrentNodeKey(newVal ?? null))
+
+setCurrentNodeKey(key) {
+  this.currentNodeKey = key
+  if (isPropAbsent(key)) { /* 清除高亮 */ return }   // 只认 null / undefined
+  const node = this.getNode(key)
+  if (node) { this.setCurrentNode(node) }             // 找不到 key 就什么都不做
+}
+```
+传 `''` 时它**既不是** `null`/`undefined`（不进清除分支），**又找不到** key 为 `''` 的节点（不进设置分支）→ 直接掉进"什么都不做"，旧高亮原样留着。表现是"清除了选中，描边没了、列表里那一行还亮着"——一半生效一半没生效，很容易以为是自己的逻辑写错。
+**修法**：在绑定处把空值映射成 `null`（`:current-node-key="selectedId || null"`，`null` 对非必填 prop 不触发类型警告），内部 store 继续用 `''` 表示"无选中"。
+
+【通用教训】**"用 `''` 表示没有"是应用层的常见约定，但第三方组件库往往只认 `null`/`undefined`**，两侧语义不一致时**不会报错**，只会静默不生效。适用范围：所有"受控 key / 受控值"型组件（树/表格的 current key、选择器的 modelValue 等）。
+**排查手法**：这类问题的特征是"我传了值但组件没反应"，此时**读库源码里那个 setter 的空值分支**比猜快得多 —— 本例从 `isPropAbsent(key)` 与 `if (node)` 两行就能确定 `''` 会掉进空档。顺带：添加"清空"能力时，务必同时验证**组件内部高亮/选中态**与**外部业务状态**是否一起被清掉，只验一头会漏掉这种半生效缺陷。
+- [2026-10-03 16:51] [经验教训] 离线应用选编译期图标方案；图标名要先批量核对（Material Symbols 与 Material Icons 命名不同）；窄容器用纯图标+tooltip — model-viewer 引入图标库（Iconify）时确认的可复用结论：
+
+【1｜选型：离线桌面应用必须用编译期方案】三种做法对比：① `@iconify/vue` + 在线 API —— 运行时向 Iconify 服务器取 SVG，**离线直接不可用**；② `@iconify/vue` + `addCollection(整集)` —— 离线可以，但要把整集（Material Symbols 数千个）打进包；③ **`unplugin-icons` + `@iconify-json/<集名>`（采用）** —— `~icons/<集>/<名>` 在编译期编译成 Vue 组件，只打包真正 import 的图标。**实测：几十处图标总共只增加 6KB**（对比 ② 的量级差距）。配置只有 vite 插件一行。
+**适用范围**：任何"必须离线"的前端（Tauri/Electron/内网部署）选图标方案时，先排除一切运行时按需拉取的方案。
+
+【2｜图标名必须**先批量核对**，不要逐个等构建报错】Material Symbols 与旧的 Material Icons **命名并不完全一致**（例：`highlight_off` 是旧名，Material Symbols 里没有 `highlight-off`，最接近的语义等价名是 `deselect`）。而 `pnpm build` 一次**只报第一个**缺失项 —— 逐个试就是多轮往返。
+**做法**：动手前把要用的名字一次性对着图标集的数据文件核对（本项目即 `node_modules/@iconify-json/<集>/icons.json` 的 `icons` + `aliases` 键），缺失的先改成等价名再写代码。
+
+【3｜窄容器里「图标 + 文字」会溢出，纯图标反而更省空间】侧栏仅 340px、表格操作列 152px 这类宽度敏感处，加图标会直接把按钮挤出去（与"长模型名挤掉操作按钮"是同一类问题）。**做法：改用纯图标按钮 + tooltip** —— 比原来的纯文字更省空间，可发现性由 tooltip 兜底。空间充足处（工具栏、面板底部）仍用「图标 + 文字」，不牺牲可读性。**前提**：纯图标按钮必须逐个配 tooltip，否则等于把可读性换成了猜谜。
+
+【4｜顺手统一历史写法】同一界面里不要并存两套图标来源。本项目动画条的播放/暂停/停止原本是手写的内联 SVG，引入图标库后一并换掉 —— 否则"两套视觉语言"会长期漂移。
+- [2026-10-03 16:54] [经验教训] "刻意的默认值 + 多个调用点"会让同类操作行为不一致：默认值越安全，漏传越隐蔽（须主动审计调用点） — model-viewer 暴露的一类缺陷模式：**"刻意的默认值 + 多个调用点" 会导致同类操作行为不一致**。
+
+【具体案例】`ViewerEngine.fitToObject(object, { animate = false })` 的默认值 `false` 是**有意**的 —— 加载模型、重新摆放、尺寸变化这些程序化路径必须立刻到位，不能有过渡。但正因为默认值被"设计成安全的"，每个**用户主动**的视角跳转调用点都必须**显式**传 `animate: true`，而实际只有「切换视图预设 / 重置视图」（走 `setViewPreset`）传了：
+- 层级树「聚焦」→ 漏传 → 瞬移（本轮修掉）
+- 工具栏「适配视图」/ `F` 键 → 漏传 → 仍瞬移（**未修，待定**）
+- 「重置视图」/ `R` 键 → 有动画
+结果同一个工具栏里两个按钮"一个跳、一个滑"，而这种不一致**没有任何测试或报错会提示**。
+
+【可复用做法】当某个默认值是为了保护某类调用者而**刻意**设定的（代码里通常有一句"默认 X，因为这边的场景需要 Y"的注释），就要把它当成一个**审计信号**：显式列出所有调用点，逐个确认"它属于哪一类、该不该显式覆盖"。默认值越"安全"，漏传的代价就越隐蔽 —— 因为程序不会崩，只是行为悄悄不对。
+
+【适用范围】任何"默认值 + 多入口"的 API：动画开关、副作用开关（是否持久化 / 是否记录历史 / 是否触发重渲染）、权限或校验参数。**排查线索**：同一界面上同类操作表现不一致时，先怀疑"某处漏传了参数"，而不是"这个功能的实现有问题"。
+- [2026-10-03 17:00] [经验教训] 换掉自带形态差异的控件时要多重信号补偿可辨性；状态色优先用组件库的 type 而非自定义 CSS（避免特异性之争） — model-viewer 换控件时确认的两条可复用结论：
+
+【1｜把"自带形态差异"的控件换成"没有形态差异"的控件，必须主动补偿状态可辨性】`el-switch` 的开关位置本身就表达状态，而图标按钮没有这层信息 —— 换过去后如果只换个图标形状，隐藏态的辨识度会明显下降。**做法：用多个互不依赖的信号叠加**。本项目用了三重：图标形状（实心眼睛 / 划掉的眼睛）+ 按钮颜色（用 `type` 区分）+ 相邻文本的既有样式（节点名删除线 + 变灰）。
+**适用范围**：switch → 图标按钮、复选 → 开关、标签页 → 下拉 等任何"换控件"的改造。**检查方法**：换完问一句"不看交互、只扫一眼，能分清这两个状态吗"。
+
+【2｜表达状态优先用组件库的 `type`/`variant`，不要自定义 CSS 去覆盖它的颜色】自定义 class 想改按钮颜色时，会与 Element Plus 的 `.el-button.is-text` 这类选择器**特异性打平甚至更低**，于是要么靠加载顺序碰运气、要么被迫加 `!important` 或堆选择器 —— 都是味道很差的修法。**改用组件自己的属性**（`:type="visible ? 'default' : 'info'"`）则：① 符合项目"复用 Element Plus 组件"的规范；② 颜色跟随主题变量自动适配明暗；③ 不必和库的样式特异性较劲。
+**适用范围**：任何基于组件库的主题色/状态色表达（按钮类型、标签类型、文字层级）。**例外**：库没有对应属性可表达时才回退到自定义样式，此时用足够特异性的选择器并写清理由。
 
 ## 行动指南 Action Guide
 
@@ -616,6 +773,27 @@ $i.ToBitmap().Save("installer-icon.png", [System.Drawing.Imaging.ImageFormat]::P
 【真机验收（自动化测不到）】启动正常 + 设置/最近文件读写；双击关联打开与单实例转交；最近文件重开与失效路径提示；切换模型轴向；截图另存；导入 HDR→存主题→重启复现；十万级三角面 FPS；视角过渡与入场动画观感；层级行按钮右对齐、滑块到底无横向滚动条；光源可视化开关；FBX 新提示（单位预选、降级告警、PBR 不再发黑、6.x 友好报错）。
 
 【环境与流程约束】vitest / vite / cargo 拉新依赖 / `pnpm tauri build` / git push 需 `sandbox_permissions: danger-full-access`。**只读文件策略是逐次判定的**：每次写文件都要单独升级+授权，多文件改动前先请用户把会话切到 `workspace-write`（本会话已两次遇到）；策略切换后需重新 read 再 edit。`git commit -m` 消息不要含 ASCII 双引号。同一文件禁止在同一条消息里并发编辑。**上游行为/布局数值/框架内部实现类事实，动手前先读源码或 grep 核对，别凭记忆**（已因此踩过两次：误记 DisplayPanel 有 320px 滑块、漏一次 store 实例化）。
+- [2026-09-21 18:17] [行动指南] 收尾状态：远端 5cf1ad5；PROJECT_MEMORY.md 受控导致每次记录后需再提交（两个方案待定）；push 需放宽沙箱 — model-viewer 本轮收尾状态：**远端 origin/main = 5cf1ad5**（本地与远端一致，工作区干净）。5cf1ad5 是 `chore(memory): 同步项目记忆（c06e4f0 提交推送状态与推送环境约束）`，只含 PROJECT_MEMORY.md 的 13 行更新；承载功能的提交是前一条 **c06e4f0**（34 文件：§36 性能优化 + §37 阴影与后处理 + §37.7 阴影 bug 修复）。
+
+【环境约束｜每次收尾都会遇到】PROJECT_MEMORY.md **受版本控制**，而它由 dsh-memoir 自动维护 → **每次 memoir 记录后该文件都会变脏、需要再提交一次**；若这次提交动作又被记入记忆，就会再来一轮（本会话实际发生：c06e4f0 之后为补记该次提交又产生了 5cf1ad5）。两个候选方案**均未实施、待用户决定**：① 把 PROJECT_MEMORY.md 加入 .gitignore 并 `git rm --cached`，改为只在本地维护；② 保持现状，接受每次会话尾声多一个 `chore(memory)` 提交。属版本控制策略变更，不要擅自改。
+
+【推送约束（已两次验证）】`git push` 必须 `sandbox_permissions: danger-full-access`：受限沙箱下 ssh 经 sh.exe 包装会报 `couldn't create signal pipe, Win32 error 5` / `Could not read from remote repository`（不是密钥问题）。用 `$env:GIT_SSH_COMMAND = 'ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20'` 加 `git push` 可一次成功。git commit 的 -m 消息避开 ASCII 双引号（PowerShell 会拆成 pathspec），多段内容用多个 -m 传；`git add/commit/log/status` 等纯本地命令不需要放宽。
+
+【验证基线】vitest **498/498（42 文件）**、`scripts/diagnose-sfc.cjs` 15/15、`pnpm build` 成功；未跑 cargo test（零 Rust 改动）。
+
+【仍未做（用户侧真机验收）】① 阴影是否真的出现（刚修的 bug，需用户确认；快照 shadow 段的 lightCasts / catcher 应为 true）；② 五个后处理通道的实际画面与兼容性（AO/泛光在半透明背景与「仅线框」下是否异常）；③ 用 §29.4 基准测 GTAO 默认开带来的性能代价 —— 数字仍缺。
+- [2026-10-03 16:51] [行动指南] pnpm add 被目录 Windows 文件权限挡住（grantWrite/Win32 5）：用 diagnose-windows-sandbox-acl 脚本一次不受限修复后重跑 — 环境约束（Windows）：`pnpm add` 可能被**工作区目录的 Windows 文件权限**挡住，而不是网络或 pnpm 配置问题。
+
+【现象】`pnpm add -D <packages>` 报 `SetNamedSecurityInfoW failed (Win32 5): grantWrite(E:\AI-Coding\model-viewer)`，进程直接退出、包没装。根因是该目录缺少 `WRITE_OWNER`（脚本观测：`writeDac=true, writeOwner=false`），pnpm 无法给自己配置工作区授权。
+
+【处理路径（已走通一次）】用技能 `diagnose-windows-sandbox-acl` 的脚本，**一次不受限运行**（脚本要写权限，受限令牌下跑它只会把沙箱限制误报成缺权限）：
+`& '<skill-dir>\scripts\diagnose-windows-sandbox-acl.ps1' -Path '<失败的目录>' -AllowRoot '<授权目录>' -Out '<持久的恢复目录>'`
+它先备份、再给该目录补上当前登录用户的完全控制，并在同一轮自校验（本次 `writeOwner` false→true，verification=verified），最后打印逐条撤销的恢复命令。**随后重跑同一条 `pnpm add` 即成功**。
+报告与备份落在 `E:\AI-Coding\dsh-acl-recovery\`（`acl-report-*.jsonl` + `acl-backup-*.json` 及其 `.ps1`）；恢复命令**未执行**（那次权限改动正是安装成功的前提）。注意该目录在工作区之外。
+
+【复用要点】① 见到 `grantWrite(<workspace>)` / `SetNamedSecurityInfoW failed` 先想到**目录权限**，别去折腾 registry 或代理；② 脚本必须不受限运行，且**一次调用**即完成诊断+修复，不要拆成两次；③ 本项目的 `-Out` 不要放在技能资源目录（技能卸载即删）。
+
+【同类经验（本会话已确认）】vitest / vite / cargo 拉新依赖 / `pnpm tauri build` / `git push` 在受限沙箱下都需 `sandbox_permissions: danger-full-access`：vitest 与 vite 是子进程命名管道限制（`spawn EPERM`），git push 是 ssh 经 `sh.exe` 包装（`couldn't create signal pipe`）。纯本地 git 命令与 `node scripts/diagnose-sfc.cjs` 不需要放宽。
 
 ## 备注 Notes
 

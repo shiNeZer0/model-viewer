@@ -13,7 +13,10 @@
       </el-option>
     </el-select>
 
-    <!-- 播放/暂停与停止：纯图标、两个独立按钮并排（title 保留可发现性） -->
+    <!--
+      播放/暂停与停止：纯图标（Material Symbols），title 保留可发现性。
+      这里原本是手写的内联 SVG，换成图标库后与其余按钮共用同一套视觉来源。
+    -->
     <el-button
       size="small"
       :type="animation.playing ? 'primary' : ''"
@@ -21,25 +24,11 @@
       :aria-label="animation.playing ? '暂停' : '播放'"
       @click="emit(animation.playing ? 'pause' : 'play')"
     >
-      <svg
-        v-if="animation.playing"
-        width="14"
-        height="14"
-        viewBox="0 0 24 24"
-        fill="currentColor"
-        aria-hidden="true"
-      >
-        <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
-      </svg>
-      <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-        <path d="M8 5v14l11-7z" />
-      </svg>
+      <el-icon><IconPause v-if="animation.playing" /><IconPlayArrow v-else /></el-icon>
     </el-button>
 
     <el-button size="small" title="停止" aria-label="停止" @click="emit('stop')">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-        <path d="M6 6h12v12H6z" />
-      </svg>
+      <el-icon><IconStop /></el-icon>
     </el-button>
 
     <el-slider
@@ -80,6 +69,9 @@
 <script setup>
 import { ANIMATION_SPEEDS, LOOP_MODES, formatClipDuration } from '../../core/three/animation.js'
 import { useAnimationStore } from '../../stores/animationStore.js'
+import IconPause from '~icons/material-symbols/pause'
+import IconPlayArrow from '~icons/material-symbols/play-arrow'
+import IconStop from '~icons/material-symbols/stop'
 
 const emit = defineEmits(['play', 'pause', 'stop', 'seek', 'speed', 'loop-mode', 'select-clip'])
 

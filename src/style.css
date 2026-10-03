@@ -13,6 +13,11 @@
  */
 :root {
   --viewer-overlay-bg: rgba(15, 17, 21, 0.72);
+  /*
+   * 悬浮工具栏高度：InfoHud 与悬浮侧栏都从它下方开始，靠它让位。
+   * 集中成一个变量，改高度时不必去几个文件里各找一遍。
+   */
+  --viewer-toolbar-height: 52px;
 }
 
 html:not(.dark) {

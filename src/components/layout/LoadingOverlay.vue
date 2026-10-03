@@ -10,13 +10,17 @@
         :show-text="false"
       />
       <p class="loading-overlay__detail">{{ detail }}</p>
-      <el-button size="small" @click="emit('cancel')">取消加载</el-button>
+      <el-button size="small" @click="emit('cancel')">
+        <el-icon><IconClose /></el-icon><span>取消加载</span>
+      </el-button>
     </div>
   </div>
 </template>
 
 <script setup>
 import { computed } from 'vue'
+
+import IconClose from '~icons/material-symbols/close'
 
 const props = defineProps({
   fileName: { type: String, default: '' },

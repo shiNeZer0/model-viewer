@@ -8,7 +8,7 @@
       title="显示模型信息（快捷键 I）"
       @click="emit('update:visible', true)"
     >
-      i
+      <el-icon><IconInfo /></el-icon>
     </button>
 
     <div v-else class="info-hud__panel">
@@ -20,7 +20,7 @@
           title="隐藏（快捷键 I）"
           @click="emit('update:visible', false)"
         >
-          ×
+          <el-icon><IconClose /></el-icon>
         </button>
       </div>
 
@@ -51,7 +51,7 @@
         title="复制性能快照：FPS、绘制缓冲、后处理 pass、三角面与 drawCall（用于对比优化前后）"
         @click="emit('snapshot')"
       >
-        复制性能快照
+        <el-icon><IconContentCopy /></el-icon><span>复制性能快照</span>
       </button>
 
       <p v-if="errorText" class="info-hud__error">{{ errorText }}</p>
@@ -68,6 +68,9 @@ import { capabilities } from '../../platform/index.js'
 import { useDisplayStore } from '../../stores/displayStore.js'
 import { useModelStore } from '../../stores/modelStore.js'
 import { formatBytes, formatCount } from '../../utils/format.js'
+import IconClose from '~icons/material-symbols/close'
+import IconContentCopy from '~icons/material-symbols/content-copy'
+import IconInfo from '~icons/material-symbols/info'
 
 const props = defineProps({
   visible: { type: Boolean, default: true },
@@ -104,7 +107,8 @@ const dimensionText = computed(() => {
 <style scoped>
 .info-hud {
   position: absolute;
-  top: 10px;
+  /* 让开常驻的悬浮工具栏（它盖在画布顶部），否则 HUD 会被压在下面 */
+  top: calc(var(--viewer-toolbar-height, 52px) + 10px);
   left: 10px;
   z-index: 3;
   font-size: 12px;
@@ -143,6 +147,10 @@ const dimensionText = computed(() => {
 }
 
 .info-hud__toggle {
+  /* 换成图标后要自己保证居中：原生 button 默认按文字基线排版 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 0 4px;
   border: none;
   background: none;
@@ -181,6 +189,10 @@ const dimensionText = computed(() => {
 }
 
 .info-hud__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   width: 100%;
   margin-top: 6px;
   padding: 3px 6px;
@@ -198,6 +210,10 @@ const dimensionText = computed(() => {
 }
 
 .info-hud__chip {
+  /* 图标要能在这个圆形按钮里居中（font-style: italic 是给原来的字母 "i" 用的，已无用） */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 22px;
   height: 22px;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -205,7 +221,6 @@ const dimensionText = computed(() => {
   background: rgba(15, 17, 21, 0.3);
   color: var(--el-text-color-regular);
   cursor: pointer;
-  font-style: italic;
   line-height: 1;
 }
 

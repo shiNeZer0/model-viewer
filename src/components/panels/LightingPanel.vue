@@ -46,7 +46,8 @@
       <el-form-item v-if="environment.source === 'imported'" label="贴图">
         <div class="lighting-panel__hdr">
           <el-button size="small" :loading="importingEnv" @click="onImportEnvironment">
-            {{ environment.customHdrName ? '重新导入' : '选择 HDR / EXR' }}
+            <el-icon><IconImage /></el-icon>
+            <span>{{ environment.customHdrName ? '重新导入' : '选择 HDR / EXR' }}</span>
           </el-button>
           <el-button
             v-if="environment.customHdrName"
@@ -54,7 +55,7 @@
             text
             @click="onClearEnvironment"
           >
-            移除
+            <el-icon><IconClose /></el-icon><span>移除</span>
           </el-button>
         </div>
         <p v-if="environment.customHdrName" class="lighting-panel__hdr-name">
@@ -166,7 +167,7 @@
     <div class="lighting-panel__save">
       <el-input v-model="themeName" size="small" placeholder="主题名称" clearable />
       <el-button size="small" type="primary" :loading="saving" @click="onSaveTheme">
-        保存为主题
+        <el-icon><IconSave /></el-icon><span>保存为主题</span>
       </el-button>
     </div>
     <p class="lighting-panel__hint">
@@ -177,16 +178,30 @@
       <el-table-column prop="name" label="名称" show-overflow-tooltip />
       <el-table-column label="操作" width="152" align="right">
         <template #default="{ row }">
-          <el-button
-            size="small"
-            text
-            :type="String(lighting.activeThemeId) === String(row.id) ? 'primary' : ''"
-            @click="onApplyTheme(row.id)"
-          >
-            应用
-          </el-button>
-          <el-button size="small" text @click="onRenameTheme(row)">重命名</el-button>
-          <el-button size="small" text type="danger" @click="onRemoveTheme(row)">删除</el-button>
+          <!--
+            行内三个动作改纯图标 + tooltip：这一列只有 152px，
+            三个「图标 + 文字」按钮会直接溢出，纯图标反而更省空间。
+          -->
+          <el-tooltip content="应用该主题" placement="top">
+            <el-button
+              size="small"
+              text
+              :type="String(lighting.activeThemeId) === String(row.id) ? 'primary' : ''"
+              @click="onApplyTheme(row.id)"
+            >
+              <el-icon><IconCheck /></el-icon>
+            </el-button>
+          </el-tooltip>
+          <el-tooltip content="重命名" placement="top">
+            <el-button size="small" text @click="onRenameTheme(row)">
+              <el-icon><IconEdit /></el-icon>
+            </el-button>
+          </el-tooltip>
+          <el-tooltip content="删除" placement="top">
+            <el-button size="small" text type="danger" @click="onRemoveTheme(row)">
+              <el-icon><IconDelete /></el-icon>
+            </el-button>
+          </el-tooltip>
         </template>
       </el-table-column>
     </el-table>
@@ -204,6 +219,12 @@ import { useDisplayStore } from '../../stores/displayStore.js'
 import { useLightingStore } from '../../stores/lightingStore.js'
 import { describeError } from '../../utils/error-messages.js'
 import LightSourceEditor from './LightSourceEditor.vue'
+import IconCheck from '~icons/material-symbols/check'
+import IconClose from '~icons/material-symbols/close'
+import IconDelete from '~icons/material-symbols/delete'
+import IconEdit from '~icons/material-symbols/edit'
+import IconImage from '~icons/material-symbols/image'
+import IconSave from '~icons/material-symbols/save'
 
 const lighting = useLightingStore()
 // 光源可视化开关存在 displayStore（与网格/坐标轴/边界框同属"视口辅助"）

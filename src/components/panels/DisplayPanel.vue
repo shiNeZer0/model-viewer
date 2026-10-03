@@ -193,7 +193,7 @@
           低性能模式已关闭
         </el-tag>
         <el-button link size="small" @click="postfx.resetChannelSettings(channel.id)">
-          重置
+          <el-icon><IconRestartAlt /></el-icon><span>重置</span>
         </el-button>
       </div>
 
@@ -212,7 +212,9 @@
       </el-form>
     </div>
 
-    <el-button size="small" @click="resetDisplay">恢复默认显示设置</el-button>
+    <el-button size="small" @click="resetDisplay">
+      <el-icon><IconRestartAlt /></el-icon><span>恢复默认显示设置</span>
+    </el-button>
   </div>
 </template>
 
@@ -229,6 +231,7 @@ import { BACKGROUND_MODES } from '../../core/three/stage.js'
 import { useDisplayStore } from '../../stores/displayStore.js'
 import { usePostFxStore } from '../../stores/postfxStore.js'
 import { useSettingsStore } from '../../stores/settingsStore.js'
+import IconRestartAlt from '~icons/material-symbols/restart-alt'
 
 const display = useDisplayStore()
 const postfx = usePostFxStore()

@@ -22,10 +22,14 @@ export const OUTLINE_DEFAULTS = {
   pulsePeriod: 0,
 }
 
-/** 与线框覆盖层同色系，保证"选中"与"线框"看起来是一套语言 */
-export const OUTLINE_VISIBLE_COLOR = '#7fb2ff'
-/** 被遮挡部分的描边（比可见部分暗，保留"在后面"的深度感） */
-export const OUTLINE_HIDDEN_COLOR = '#2a3f66'
+/**
+ * 选中描边的**可见部分**颜色：橙红。
+ * 刻意与「仅线框」的蓝色覆盖层（shadeModes.js 的 OVERLAY_COLOR）拉开色相 ——
+ * 两者可能同时出现，同色系会分不清"哪个才是被选中的节点"。
+ */
+export const OUTLINE_VISIBLE_COLOR = '#ff6b35'
+/** 被遮挡部分的描边（同色相压暗，保留"它在后面"的深度感） */
+export const OUTLINE_HIDDEN_COLOR = '#8a3419'
 
 export const OUTLINE_RANGES = {
   edgeStrength: { min: 0, max: 10, step: 0.5 },

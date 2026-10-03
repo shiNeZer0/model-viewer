@@ -4,7 +4,9 @@
       <template #image>
         <div class="empty-hint__glyph">3D</div>
       </template>
-      <el-button type="primary" @click="emit('open')">打开模型</el-button>
+      <el-button type="primary" @click="emit('open')">
+        <el-icon><IconFolderOpen /></el-icon><span>打开模型</span>
+      </el-button>
     </el-empty>
 
     <div class="empty-hint__formats">
@@ -41,6 +43,7 @@ import { computed } from 'vue'
 import { MODEL_FORMATS } from '../../constants/formats.js'
 import { capabilities, isTauri } from '../../platform/index.js'
 import RecentFilesList from './RecentFilesList.vue'
+import IconFolderOpen from '~icons/material-symbols/folder-open'
 
 defineProps({
   /** 最近文件记录（core/recentFiles.js 归一化后），由视图注入 */

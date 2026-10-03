@@ -2,7 +2,9 @@
   <div class="recent-files" :class="{ 'recent-files--compact': compact }">
     <div v-if="entries.length" class="recent-files__header">
       <span class="recent-files__title">最近打开</span>
-      <el-button text size="small" @click="emit('clear')">清空</el-button>
+      <el-button text size="small" @click="emit('clear')">
+        <el-icon><IconDeleteSweep /></el-icon><span>清空</span>
+      </el-button>
     </div>
 
     <p v-if="entries.length && !canReopen" class="recent-files__note">
@@ -38,7 +40,7 @@
             size="small"
             @click="emit('remove', entry.path)"
           >
-            ✕
+            <el-icon><IconClose /></el-icon>
           </el-button>
         </el-tooltip>
       </li>
@@ -55,6 +57,8 @@ import { computed } from 'vue'
 
 import { describeRecentTime } from '../../core/recentFiles.js'
 import { formatBytes } from '../../utils/format.js'
+import IconClose from '~icons/material-symbols/close'
+import IconDeleteSweep from '~icons/material-symbols/delete-sweep'
 
 const props = defineProps({
   /** core/recentFiles.js 归一化后的记录（不要直接传后端原始行） */

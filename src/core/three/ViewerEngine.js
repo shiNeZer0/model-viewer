@@ -257,6 +257,12 @@ export class ViewerEngine {
 
     /** 最近一次真正应用过的「尺寸@像素比」，用于短路重复上报 */
     this.lastResizeKey = null
+    /**
+     * 是否处于「被隐藏」状态（keep-alive deactivate，例如跳到设置页）。
+     * 此时画布被移出文档、尺寸报成 0，必须忽略尺寸变化 —— 否则会把 render target
+     * 缩到 1×1，返回时再放大一次，白重建两遍 GPU 资源。
+     */
+    this.suspended = false
 
     /*
      * 全屏切换改变的是容器尺寸而非 window，只看 window.resize 会导致画布不铺满。
@@ -271,7 +277,11 @@ export class ViewerEngine {
       cancelFrame: (handle) => cancelAnimationFrame(handle),
       onResize: () => this.handleResize(),
     })
-    this.resizeObserver = new ResizeObserver(() => this.resizeScheduler.schedule())
+    this.resizeObserver = new ResizeObserver(() => {
+      // 隐藏期间画布尺寸为 0，据此重算只会白重建一遍 GPU 资源
+      if (this.suspended) return
+      this.resizeScheduler.schedule()
+    })
     this.resizeObserver.observe(container)
     this.handleResize()
 
@@ -688,8 +698,35 @@ export class ViewerEngine {
     this.onFps?.(this.fps)
   }
 
+  /**
+   * 暂停渲染与尺寸响应。配套 resume()。
+   *
+   * 用途：组件被 keep-alive 隐藏时调用（例如跳到设置页）。引擎此时**不销毁**（模型要留着），
+   * 但画布已被移出文档，所以必须停掉循环并忽略尺寸上报。
+   * @returns {boolean} 是否真的发生了变化
+   */
+  suspend() {
+    if (this.disposed || this.suspended) return false
+    this.suspended = true
+    this.stop()
+    return true
+  }
+
+  /**
+   * 从隐藏中恢复：按真实尺寸重算一次，并唤醒渲染循环。
+   * @returns {boolean} 是否真的发生了变化
+   */
+  resume() {
+    if (this.disposed || !this.suspended) return false
+    this.suspended = false
+    // 隐藏期间尺寸是 0：不强制清键的话，这次重算会被 handleResize 的短路直接挡掉
+    this.lastResizeKey = null
+    this.handleResize()
+    return true
+  }
+
   handleResize() {
-    if (this.disposed) return
+    if (this.disposed || this.suspended) return
     const width = Math.max(this.container.clientWidth, 1)
     const height = Math.max(this.container.clientHeight, 1)
     const pixelRatio = Math.min(window.devicePixelRatio || 1, this.pixelRatioLimit)
@@ -1253,13 +1290,19 @@ export class ViewerEngine {
     return flags
   }
 
-  /** 聚焦某个节点：把相机对准它的包围盒中心（层级树双击/按钮） */
+  /**
+   * 聚焦某个节点：把相机**平滑推近**到它的包围盒中心（层级树「聚焦」按钮）。
+   *
+   * 这里传 `animate: true`：它是**用户主动**的视角跳转，瞬移会让人失去空间方位感 ——
+   * 与「切换视图预设」同理。只有加载模型、重新摆放、尺寸变化那类程序化路径才需要瞬时到位。
+   * 系统开启「减少动效」偏好时会自动退回瞬时（见 animateCameraTo）。
+   */
   focusNode(nodeId) {
     const node = this.hierarchy.nodeById.get(nodeId)
     if (!node) return null
     const box = new Box3().setFromObject(node)
     if (box.isEmpty()) return null
-    return this.fitToObject(node, { box, presetId: this.lastPresetId })
+    return this.fitToObject(node, { box, presetId: this.lastPresetId, animate: true })
   }
 
   /** 当前模型摆放后的包围盒（尺寸面板 / 边界框标注使用） */

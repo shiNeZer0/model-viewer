@@ -1,5 +1,14 @@
 <template>
-  <router-view />
+  <!--
+    只用 keep-alive 缓存查看器，不缓存设置页（纯表单，重新挂载没有代价）。
+    查看器一旦卸载就会 dispose 渲染引擎、丢掉当前模型 —— 用户只是去改个设置，
+    回来模型就没了（这是个已修的 BUG）。
+  -->
+  <router-view v-slot="{ Component }">
+    <keep-alive :include="['Viewer']">
+      <component :is="Component" />
+    </keep-alive>
+  </router-view>
 </template>
 
 <script setup>

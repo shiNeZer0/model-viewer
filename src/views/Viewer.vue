@@ -1,6 +1,10 @@
 <template>
-  <el-container class="viewer">
-    <el-header class="viewer__header" height="52px">
+  <div class="viewer">
+    <!--
+      悬浮工具栏：常驻顶部，不参与折叠。
+      它和侧栏都是**浮在画布之上**的覆盖层 —— 3D 视口因此能铺满整个窗口。
+    -->
+    <header class="viewer__toolbar">
       <ViewerToolbar
         :has-model="model.hasModel"
         :loading="model.isLoading"
@@ -41,92 +45,103 @@
           </el-popover>
         </template>
       </ViewerToolbar>
-    </el-header>
+    </header>
 
-    <el-container class="viewer__body">
-      <el-main class="viewer__main">
-        <!-- Web 端的 HTML5 拖放目标就是这个舞台区域；桌面端用原生拖放事件，会忽略它 -->
-        <div ref="stageRef" class="viewer__stage">
-          <ModelCanvas
-            @ready="onEngineReady"
-            @context-lost="onContextLost"
-            @fps="onFps"
-            @render-error="onRenderError"
-          >
-            <LoadingOverlay
-              v-if="model.isLoading"
-              :file-name="model.fileName"
-              :percent="model.progressPercent"
-              @cancel="cancelLoading"
-            />
-            <EmptyDropHint
-              v-else-if="!model.hasModel"
-              :recent-entries="recent.entries"
-              :can-reopen-recent="recent.canReopen"
-              @open="openViaDialog"
-              @open-recent="onOpenRecent"
-              @remove-recent="recent.remove($event)"
-              @clear-recent="recent.clear()"
-            />
-          </ModelCanvas>
+    <!-- Web 端的 HTML5 拖放目标就是这个舞台区域；桌面端用原生拖放事件，会忽略它 -->
+    <div ref="stageRef" class="viewer__stage">
+      <ModelCanvas
+        @ready="onEngineReady"
+        @context-lost="onContextLost"
+        @fps="onFps"
+        @render-error="onRenderError"
+      >
+        <LoadingOverlay
+          v-if="model.isLoading"
+          :file-name="model.fileName"
+          :percent="model.progressPercent"
+          @cancel="cancelLoading"
+        />
+        <EmptyDropHint
+          v-else-if="!model.hasModel"
+          :recent-entries="recent.entries"
+          :can-reopen-recent="recent.canReopen"
+          @open="openViaDialog"
+          @open-recent="onOpenRecent"
+          @remove-recent="recent.remove($event)"
+          @clear-recent="recent.clear()"
+        />
+      </ModelCanvas>
 
-          <!-- 浮层：信息 HUD（左上，快捷键 I 开关） -->
-          <InfoHud
-            v-model:visible="showInfoHud"
-            :fps="fps"
-            :frames="rendererInfo.renderedFrames ?? 0"
-            :webgl-version="rendererInfo.webglVersion"
-            :post-fx="rendererInfo.postFx !== false"
-            :error-text="renderError ? `${renderError.message}（${renderError.hint}）` : ''"
-            @snapshot="onCopyPerfSnapshot"
+      <!-- 浮层：信息 HUD（左上，快捷键 I 开关） -->
+      <InfoHud
+        v-model:visible="showInfoHud"
+        :fps="fps"
+        :frames="rendererInfo.renderedFrames ?? 0"
+        :webgl-version="rendererInfo.webglVersion"
+        :post-fx="rendererInfo.postFx !== false"
+        :error-text="renderError ? `${renderError.message}（${renderError.hint}）` : ''"
+        @snapshot="onCopyPerfSnapshot"
+      />
+
+      <!-- 浮层：动画控制条（底部，仅含动画的模型出现） -->
+      <AnimationBar
+        @play="onPlayAnimation"
+        @pause="onPauseAnimation"
+        @stop="onStopAnimation"
+        @seek="onSeekAnimation"
+        @speed="onAnimationSpeed"
+        @loop-mode="onAnimationLoopMode"
+        @select-clip="onSelectAnimationClip"
+      />
+    </div>
+
+    <!-- 悬浮侧栏：可折叠 -->
+    <aside class="viewer__aside" :class="{ 'is-collapsed': asideCollapsed }">
+      <el-tabs v-model="activeTab" class="viewer__tabs">
+        <el-tab-pane label="模型信息" name="info">
+          <ModelInfoPanel />
+        </el-tab-pane>
+        <el-tab-pane :label="treeTabLabel" name="tree">
+          <ModelTreePanel
+            :nodes="model.hierarchy"
+            :truncated="model.hierarchyTruncated"
+            :selected-id="model.selectedNodeId"
+            @toggle-visibility="onToggleNodeVisibility"
+            @focus="onFocusNode"
+            @select="onSelectNode"
+            @show-all="onShowAllNodes"
+            @hide-all="onHideAllNodes"
+            @reset-visibility="onResetNodeVisibility"
           />
+        </el-tab-pane>
+        <el-tab-pane label="显示" name="display">
+          <DisplayPanel />
+        </el-tab-pane>
+        <el-tab-pane label="光照" name="lighting">
+          <LightingPanel />
+        </el-tab-pane>
+      </el-tabs>
+    </aside>
 
-          <!-- 浮层：动画控制条（底部，仅含动画的模型出现） -->
-          <AnimationBar
-            @play="onPlayAnimation"
-            @pause="onPauseAnimation"
-            @stop="onStopAnimation"
-            @seek="onSeekAnimation"
-            @speed="onAnimationSpeed"
-            @loop-mode="onAnimationLoopMode"
-            @select-clip="onSelectAnimationClip"
-          />
-        </div>
-      </el-main>
-
-      <el-aside class="viewer__aside" width="340px">
-        <el-tabs v-model="activeTab" class="viewer__tabs">
-          <el-tab-pane label="模型信息" name="info">
-            <ModelInfoPanel />
-          </el-tab-pane>
-          <el-tab-pane :label="treeTabLabel" name="tree">
-            <ModelTreePanel
-              :nodes="model.hierarchy"
-              :truncated="model.hierarchyTruncated"
-              :selected-id="model.selectedNodeId"
-              @toggle-visibility="onToggleNodeVisibility"
-              @focus="onFocusNode"
-              @select="onSelectNode"
-              @show-all="onShowAllNodes"
-              @hide-all="onHideAllNodes"
-              @reset-visibility="onResetNodeVisibility"
-            />
-          </el-tab-pane>
-          <el-tab-pane label="显示" name="display">
-            <DisplayPanel />
-          </el-tab-pane>
-          <el-tab-pane label="光照" name="lighting">
-            <LightingPanel />
-          </el-tab-pane>
-        </el-tabs>
-      </el-aside>
-    </el-container>
-  </el-container>
+    <!--
+      折叠按钮**独立于侧栏**：侧栏收起后它仍留在右边缘，
+      否则一旦收起就再也没有入口能把它打开了。
+    -->
+    <button
+      class="viewer__aside-toggle"
+      :class="{ 'is-collapsed': asideCollapsed }"
+      type="button"
+      :title="asideCollapsed ? '展开面板' : '收起面板'"
+      @click="asideCollapsed = !asideCollapsed"
+    >
+      {{ asideCollapsed ? '‹' : '›' }}
+    </button>
+  </div>
 </template>
 
 <script setup>
 import { ElMessage } from 'element-plus'
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, shallowRef } from 'vue'
 import { useRouter } from 'vue-router'
 
 import EmptyDropHint from '../components/layout/EmptyDropHint.vue'
@@ -162,6 +177,13 @@ import { formatCount } from '../utils/format.js'
 import { describeError } from '../utils/error-messages.js'
 import { formatPerfSnapshot } from '../utils/perf-snapshot.js'
 
+/*
+ * 显式声明组件名：App.vue 的 keep-alive 按名字匹配（`include`）。
+ * Vue 也能从文件名推断，但写出来可避免将来重命名文件时"缓存静默失效"——
+ * 那种失效的表现正是"点设置回来模型没了"，很难定位。
+ */
+defineOptions({ name: 'Viewer' })
+
 const router = useRouter()
 const model = useModelStore()
 const settings = useSettingsStore()
@@ -182,6 +204,17 @@ const activeTab = ref('info')
 const currentPreset = ref(DEFAULT_VIEW_PRESET)
 /** 信息 HUD 是否显示（会话级：快捷键 I 切换，HUD 自带折叠按钮） */
 const showInfoHud = ref(true)
+/**
+ * 悬浮侧栏是否收起。
+ * 默认**收起**：让画布先吃满窗口，需要时再展开（会话级，不持久化）。
+ */
+const asideCollapsed = ref(true)
+/**
+ * 本视图是否在前台。
+ * keep-alive 下组件不会卸载，但**键盘监听仍挂在 window 上** —— 不在隐藏时关掉的话，
+ * 在设置页按 `1`~`7`/`f`/`s` 会静默作用到看不见的画布上。
+ */
+const isActive = ref(true)
 /** 「最近」弹层是否展开（点开某个历史文件后要主动收起） */
 const recentMenuOpen = ref(false)
 
@@ -285,6 +318,21 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   unlistenDrop?.()
   unlistenOpenRequest?.()
+})
+
+/*
+ * keep-alive：跳到设置页时本视图只是 deactivated —— 引擎仍然活着，所以模型不会丢。
+ * 但画布已被移出文档，必须暂停引擎（否则它会按 0×0 的尺寸重算资源），
+ * 并关掉快捷键（它们监听在 window 上，与视图是否可见无关）。
+ */
+onDeactivated(() => {
+  isActive.value = false
+  engineRef.value?.suspend()
+})
+
+onActivated(() => {
+  isActive.value = true
+  engineRef.value?.resume()
 })
 
 /* ------------------------------- 视图操作 ------------------------------- */
@@ -405,7 +453,8 @@ useHotkeys(
       showInfoHud.value = !showInfoHud.value
     },
   },
-  { enabled: () => true },
+  // 被 keep-alive 隐藏时不要响应：否则在设置页按键会静默作用到看不见的画布上
+  { enabled: () => isActive.value },
 )
 
 /* --------------------------- 性能快照（M6-7 基准用） --------------------------- */
@@ -475,50 +524,125 @@ function onContextLost() {
 </script>
 
 <style scoped>
+/*
+ * 外壳：画布铺满整个视口，工具栏与侧栏都是浮在它上面的覆盖层。
+ * 原先 header / aside 占据流内空间，画布被挤小；现在 3D 视口吃满窗口。
+ *
+ * 附带好处：折叠侧栏**不改变画布尺寸**，因此不会触发 renderer 尺寸重算
+ * （那条路径会重建后处理的 render target，见 postfx.js 的 applySize）。
+ */
 .viewer {
-  height: 100vh;
-  background-color: var(--el-bg-color-page);
-}
-
-.viewer__header {
-  display: flex;
-  align-items: center;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--el-border-color);
-  background-color: var(--el-bg-color);
-}
-
-.viewer__body {
-  min-height: 0;
-}
-
-.viewer__main {
   position: relative;
-  padding: 0;
-  min-width: 0;
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+  /* 视口底色兜底；3D 场景背景由「显示 → 背景」控制，与这里无关 */
   background-color: #1b1e24;
 }
 
 .viewer__stage {
-  position: relative;
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  inset: 0;
 }
 
-.viewer__caret {
-  margin-left: 4px;
-  font-size: 10px;
-  opacity: 0.7;
+/* ------------------------------- 悬浮工具栏 ------------------------------- */
+.viewer__toolbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  height: var(--viewer-toolbar-height);
+  padding: 0 12px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  /* 与 InfoHud 共用一套浮层配色：跟随明暗主题，同时能透出底下的模型 */
+  background: var(--viewer-overlay-bg);
+  backdrop-filter: blur(6px);
 }
 
+/*
+ * 工具栏内容（ViewerToolbar 的根元素）必须撑满。
+ * 它现在是 flex item，宽度默认只由内容决定 —— 那样内部的 spacer 就分不到空间，
+ * 「设置」按钮不会靠右（原布局里它是 block 容器的子元素，所以自动撑满）。
+ */
+.viewer__toolbar > * {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ------------------------------- 悬浮侧栏 ------------------------------- */
 .viewer__aside {
-  border-left: 1px solid var(--el-border-color);
-  background-color: var(--el-bg-color);
+  position: absolute;
+  top: calc(var(--viewer-toolbar-height) + 10px);
+  right: 10px;
+  bottom: 10px;
+  z-index: 15;
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: var(--viewer-overlay-bg);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.32);
   overflow: hidden;
+  transition:
+    transform 0.25s ease,
+    opacity 0.25s ease;
 }
 
+/*
+ * 收起：整块平移出视口（多出的 20px 覆盖 right:10px 的边距与阴影）。
+ * 用 transform 而不是动画 width —— 宽度动画每帧都会触发布局，
+ * 而旁边正有一个 WebGL 画布在渲染。
+ */
+.viewer__aside.is-collapsed {
+  transform: translateX(calc(100% + 20px));
+  opacity: 0;
+  /* 收起后不该继续拦截画布上的鼠标操作 */
+  pointer-events: none;
+}
+
+.viewer__aside-toggle {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  z-index: 16;
+  width: 22px;
+  height: 56px;
+  padding: 0;
+  /* 展开时贴在侧栏左边缘外侧；收起时回到右边缘（见 .is-collapsed） */
+  transform: translateY(-50%) translateX(calc(-340px - 8px));
+  transition: transform 0.25s ease;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  background: var(--viewer-overlay-bg);
+  backdrop-filter: blur(6px);
+  color: var(--el-text-color-regular);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.viewer__aside-toggle:hover {
+  border-color: var(--el-color-primary);
+  color: var(--el-color-primary);
+}
+
+.viewer__aside-toggle.is-collapsed {
+  transform: translateY(-50%);
+}
+
+/* --------------------------- 侧栏内 tabs 的高度链 --------------------------- */
 .viewer__tabs {
-  height: 100%;
+  flex: 1;
+  /*
+   * 关键：flex item 的 min-height 默认是 auto，内部滚动容器算不出可用高度，
+   * 表现为"内容明明超出却滚不到"（面板自身的 overflow 永不触发）。
+   */
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -544,11 +668,9 @@ function onContextLost() {
   height: 100%;
 }
 
-.viewer__footer {
-  display: flex;
-  align-items: center;
-  padding: 0 12px;
-  border-top: 1px solid var(--el-border-color);
-  background-color: var(--el-bg-color);
+.viewer__caret {
+  margin-left: 4px;
+  font-size: 10px;
+  opacity: 0.7;
 }
 </style>
