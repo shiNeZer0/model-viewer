@@ -211,9 +211,17 @@ export function useModelOpen(engineRef) {
     }
   }
 
-  /** 适配视图：把相机拉到能完整看到模型的距离（M1 会增加标准视图预设） */
+  /**
+   * 适配视图：把相机拉到能完整看到模型的距离。
+   *
+   * 用平滑过渡，与「重置视图」和层级树「聚焦」保持一致 —— 这三者都是**用户主动**的
+   * 视角跳转（加载模型那条路径走的是 setModel 内部的 fitToObject，保持瞬时，不受这里影响）。
+   *
+   * 第一个参数必须显式传 `undefined` 占位：`fitToObject(object = currentRoot, options)` 的
+   * 默认值只在实参为 undefined 时生效，传 null 会被它当成"没有对象"直接返回。
+   */
   function fitView() {
-    engineRef.value?.fitToObject()
+    engineRef.value?.fitToObject(undefined, { animate: true })
   }
 
   return { openViaDialog, openPath, registerDropTarget, cancelLoading, fitView }
