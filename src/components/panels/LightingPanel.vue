@@ -31,15 +31,35 @@
     <el-divider content-position="left">环境贴图（IBL）</el-divider>
     <el-form label-width="72px" label-position="left" size="small">
       <el-form-item label="来源">
+        <!-- 五个选项在 340px 的侧栏里排不下一行，靠下方 CSS 允许换行 -->
         <el-radio-group
+          class="lighting-panel__sources"
           :model-value="environment.source"
-          @update:model-value="updateEnvironment('source', $event)"
+          @update:model-value="onSourceChange"
         >
           <el-radio-button value="room">影棚</el-radio-button>
           <el-radio-button value="gradient">渐变</el-radio-button>
+          <el-radio-button value="builtin">内置</el-radio-button>
           <el-radio-button value="imported">导入</el-radio-button>
           <el-radio-button value="none">无</el-radio-button>
         </el-radio-group>
+      </el-form-item>
+
+      <!-- 内置全景图：随应用分发，不需要授权文件、也不依赖原文件还在不在 -->
+      <el-form-item v-if="environment.source === 'builtin'" label="全景图">
+        <el-select
+          :model-value="environment.builtinId"
+          style="width: 100%"
+          @update:model-value="updateEnvironment('builtinId', $event)"
+        >
+          <el-option
+            v-for="item in BUILTIN_ENVIRONMENTS"
+            :key="item.id"
+            :label="item.label"
+            :value="item.id"
+          />
+        </el-select>
+        <p class="lighting-panel__desc">应用内置的 360° 环境贴图（1600×800 等距柱状 HDR）</p>
       </el-form-item>
 
       <!-- 导入 HDR / EXR：桌面端会复制进应用数据目录，Web 端只能当次会话有效 -->
@@ -212,6 +232,10 @@
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, ref } from 'vue'
 
+import {
+  BUILTIN_ENVIRONMENTS,
+  DEFAULT_BUILTIN_ENVIRONMENT_ID,
+} from '../../constants/builtinEnvironments.js'
 import { LIGHTING_PRESETS, resolvePreset } from '../../constants/presets/lightingPresets.js'
 import { LIGHT_LIMITS, LIGHT_ROLES } from '../../core/three/lighting.js'
 import { capabilities, pickEnvironmentSource } from '../../platform/index.js'
@@ -264,6 +288,22 @@ async function updateAmbient(key, value, persist = true) {
 
 async function updateEnvironment(key, value, persist = true) {
   await lighting.updateEnvironment({ [key]: value }, { persist })
+}
+
+/**
+ * 切换环境来源。
+ * 切到「内置」而此前从未选过时补一个默认 id —— 否则 builtinId 为空会让引擎找不到贴图，
+ * 界面上也会出现一个空的选择框。
+ */
+async function onSourceChange(source) {
+  if (source === 'builtin' && !environment.value.builtinId) {
+    await lighting.updateEnvironment(
+      { source, builtinId: DEFAULT_BUILTIN_ENVIRONMENT_ID },
+      { persist: true },
+    )
+    return
+  }
+  await updateEnvironment('source', source)
 }
 
 /**
@@ -394,6 +434,12 @@ async function onRemoveTheme(row) {
 
 .lighting-panel__alert {
   margin: 0;
+}
+
+/* 来源的五个选项在 340px 侧栏里排不下，允许换行而不是撑出横向滚动条 */
+.lighting-panel__sources {
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .lighting-panel__desc {

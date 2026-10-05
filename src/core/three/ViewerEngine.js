@@ -34,7 +34,13 @@ import {
   normalizePose,
 } from './cameraTween.js'
 import { disposeObject3D } from './disposal.js'
-import { EnvironmentManager, loadEquirectangularTexture } from './environment.js'
+import {
+  EnvironmentManager,
+  environmentTextureName,
+  loadEquirectangularTexture,
+  resolveEnvironmentTextureUrl,
+  shouldApplyLoadedTexture,
+} from './environment.js'
 import { buildHierarchy } from './hierarchy.js'
 import { DEFAULT_IDLE_MS, createIdlePolicy, hasContinuousWork } from './idlePolicy.js'
 import {
@@ -970,27 +976,32 @@ export class ViewerEngine {
     return this.emitAnimationState()
   }
 
-  /* --------------------------- 导入的环境贴图（M6-5） --------------------------- */
+  /* --------------- 需要读取文件的环境贴图（用户导入 / 应用内置） --------------- */
 
-  /** 当前光照状态是否指向一张**尚未登记**的导入贴图（需要先去读文件） */
-  needsImportedEnvironment(environment = this.lightingState?.environment) {
-    if (environment?.source !== 'imported') return false
-    const url = environment.customHdrUrl
+  /**
+   * 当前光照状态是否指向一张**尚未登记**的环境贴图（需要先去读文件）。
+   *
+   * 覆盖两种来源：用户导入的 HDR/EXR 与随应用分发的内置全景图 ——
+   * 二者后续处理完全相同（读取 → 登记 → PMREM），区别只在 URL 从哪来。
+   */
+  needsEnvironmentTexture(environment = this.lightingState?.environment) {
+    const url = resolveEnvironmentTextureUrl(environment)
     return Boolean(url) && !this.environment.hasImportedTexture(url)
   }
 
   /**
-   * 读取导入的 HDR/EXR、登记到环境管理器，然后重新套用光照。
+   * 读取环境贴图（内置的或导入的）、登记到环境管理器，然后重新套用光照。
    *
-   * 刻意**不抛错**：导入失败只意味着"退回程序化环境"，返回 { ok:false, error } 让调用方提示一句，
+   * 刻意**不抛错**：读取失败只意味着"退回程序化环境"，返回 { ok:false, error } 让调用方提示一句，
    * 若抛出去会中断调用链，用户看到的是画面停在旧环境上一句话都没有。
    */
-  async loadImportedEnvironment(environment) {
-    const url = environment?.customHdrUrl
+  async loadEnvironmentTexture(environment) {
+    const url = resolveEnvironmentTextureUrl(environment)
     if (!url) return { ok: false, error: '缺少环境贴图地址' }
 
     try {
       const texture = await loadEquirectangularTexture(url, {
+        // 内置的一律是 .hdr；导入的取用户文件的扩展名（blob URL 上取不到扩展名）
         extension: environment.customHdrExtension || 'hdr',
       })
       if (this.disposed) {
@@ -1002,9 +1013,21 @@ export class ViewerEngine {
       texture.needsUpdate = true
 
       this.environment.registerImportedTexture(url, texture)
+      const name = environmentTextureName(environment)
+
+      /*
+       * 加载是异步的：用户连切两张时，先发起的请求可能后完成。若无条件套用，
+       * 晚到的旧请求会覆盖用户最新的选择 —— 这就是"偶发切换不起作用"的成因。
+       * 因此只有"这一张仍是当前选中的那张"时才应用；登记进缓存不受影响（登记总是有益的）。
+       */
+      if (!shouldApplyLoadedTexture(this.lightingState?.environment, url)) {
+        console.info(`[ViewerEngine] 环境贴图已就绪但用户已切换，暂不应用: ${name || url}`)
+        return { ok: true, name, stale: true }
+      }
+
       this.applyLighting(this.lightingState)
-      console.info(`[ViewerEngine] 环境贴图已载入并应用: ${environment.customHdrName ?? url}`)
-      return { ok: true, name: environment.customHdrName ?? '' }
+      console.info(`[ViewerEngine] 环境贴图已载入并应用: ${name || url}`)
+      return { ok: true, name }
     } catch (error) {
       console.warn('[ViewerEngine] 环境贴图读取失败，已退回程序化环境', error)
       return { ok: false, error: error?.message ?? String(error) }

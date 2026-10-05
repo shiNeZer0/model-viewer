@@ -74,8 +74,8 @@ export function normalizeLight(light = {}, role = 'key') {
   }
 }
 
-/** 环境来源：程序化渐变 / three 自带影棚 / 关闭 / 用户导入的 HDR、EXR */
-export const ENVIRONMENT_SOURCES = ['gradient', 'room', 'none', 'imported']
+/** 环境来源：程序化渐变 / three 自带影棚 / 关闭 / 用户导入的 HDR、EXR / 随应用分发的内置全景图 */
+export const ENVIRONMENT_SOURCES = ['gradient', 'room', 'none', 'imported', 'builtin']
 
 /**
  * 给模型树打开投影与接收阴影。
@@ -145,11 +145,16 @@ export function normalizeLightingState(state = {}) {
       bottomColor: normalizeColor(environmentSource.bottomColor, '#3a3f48'),
       // 用户导入的 HDR/EXR：名字用于回显；url 是本次运行可用的加载地址；
       // path 是桌面端复制进应用数据目录的副本路径（跨会话复现靠它）；
-      // extension 决定用 RGBELoader 还是 EXRLoader（blob URL 上取不到扩展名）
+      // extension 决定用 HDRLoader 还是 EXRLoader（blob URL 上取不到扩展名）
       customHdrName: nonEmptyString(environmentSource.customHdrName),
       customHdrUrl: nonEmptyString(environmentSource.customHdrUrl),
       customHdrPath: nonEmptyString(environmentSource.customHdrPath),
       customHdrExtension: nonEmptyString(environmentSource.customHdrExtension),
+      /*
+       * 内置全景图的 id。与「用户导入」刻意分开：内置的是应用资源，
+       * 不需要重新授权（asset scope）、也不需要应用数据目录里的副本路径。
+       */
+      builtinId: nonEmptyString(environmentSource.builtinId),
     },
   }
 }

@@ -27,6 +27,11 @@ public/basis
 # 性能回归用的生成物（scripts/make-benchmark-model.mjs 产出，MB 级）
 benchmark-models
 
+# HDR 全景原始素材 + 缩放中间产物（合计 ~119 MB，体积过大不入库）。
+# 注意：应用**内置**的是 public/hdr/ 下那份压缩版（8 张 / 22 MB），**那份必须入库** ——
+# 别因为名字相似把它一起忽略掉；本规则以根目录锚定，只命中 assets/hdr/。
+assets/hdr/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

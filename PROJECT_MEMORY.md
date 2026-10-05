@@ -337,6 +337,181 @@
 【提交时排除的一处无关改动】暂存清单里出现 `.nvmrc` 由 `22.22.1` 改成 `22.23.3`（正好是当前机器的 node 版本，项目内没有任何 pnpm node 版本配置，来源不明、与本次功能无关），已 `git checkout` 回退、**未随本次提交**。若确需让项目跟上 node 版本，应另开一个 `chore` 提交。
 
 【仍未做】① 真机验收清单（阴影是否出现、点设置后模型是否还在、五个后处理通道画面与兼容性、GTAO 默认开的性能代价、§29.4 基准数字仍为空、图标 tooltip 与窄窗口工具栏、Element Plus 升级后的组件外观）；② 待用户决定：「适配视图」（工具栏 / `F`）仍是瞬移而「重置视图」有动画，同一工具栏行为不一致，改法只差一个参数（§42.2）。
+- [2026-10-03 18:02] [工作记录] 已提交并推送：远端 5e584b4（适配视图平滑 cf7e902 + .nvmrc 修正 5e584b4）；并记录 §44 真机验收 — model-viewer 本轮收尾（**已提交并推送**）：**远端 origin/main = 5e584b4**（本地与远端一致，工作区干净）。
+
+【1. 适配视图改用平滑过渡】`src/composables/useModelOpen.js` 的 `fitView()` 改为 `engineRef.value?.fitToObject(undefined, { animate: true })`。至此三条同类操作统一：聚焦节点（层级树）/ 适配视图（工具栏、`F`）/ 重置视图（工具栏、`R`）都是平滑过渡。提交 `cf7e902`。
+- **易踩细节**：第一个参数必须显式传 `undefined` 占位 —— `fitToObject(object = currentRoot, options)` 的默认值只在实参为 `undefined` 时生效，传 `null` 会被当成"没有对象"直接返回。
+- **加载模型路径不受影响**（先查证再改）：`fitView` 的唯一调用点是工具栏与 `F` 键（`Viewer.vue`），加载走 `setModel` 内部的 `fitToObject`，保持瞬时 —— 这正是 `animate` 默认值为 `false` 的原因。
+
+【2. 真机验收记录】用户回复"已确认"，据此在 `docs/设计文档.md` 新增 **§44**，按"§38~§43 的确认清单整体通过"记录（措辞注明未逐项说明细节，有例外可直接追加）。同时 §42.2 更新为三条操作的最终状态。
+
+【3. 修正上一轮的误判（重要）】上一轮我把 `.nvmrc`（`22.22.1`→`22.23.3`）当成"来源不明"排除出提交，**那是错的**：本机只装了 node 22.23.3，版本包装器按 `.nvmrc` 找不到 22.22.1，导致测试与构建全部失败。已恢复并单独提交 `5e584b4 chore: 同步 .nvmrc 到当前 node 版本（22.23.3）`。教训已并入记忆 74f88d3a280d（修正为"先验证再排除"）。
+
+【验证】vitest **501/501（43 文件）**、`scripts/diagnose-sfc.cjs` 15/15、`pnpm build` 成功。未跑 cargo test（零 Rust 改动）。
+
+【仍是空白的一项】**§29.4 的性能基准数字**（十万级 / 四十万级三角面的 FPS 与性能快照文本）需按 §29.1 流程人工采集回填；§36.6 与 §37.6 里关于**开销大小**的条目同样仍待数字。"功能是否正常"的验收与"开销多大"是两件事，后者至今没有数据。
+- [2026-10-05 09:38] [工作记录] assets/hdr 8 张全景压缩到 1600×800（97MB→22.2MB，原图未动）：ImageMagick Q16-HDRI + triangle 滤镜，动态范围已验证 — model-viewer 把 `assets/hdr/` 的 8 张全景 HDR 压缩到 1600×800 完成（**原图未动，待用户决定是否替换**）。
+
+【结果】97.0 MB → **22.2 MB（−77%）**，全部 1600×800，`magick identify` 逐个验证。绝大多数文件 −75%~−84%；`隔壁.hdr` 本来就已经是 1600×800，体积不变。输出在 **`assets/hdr/1600x800/`**（新目录），8 个原文件保持原样 —— 覆盖不可逆，先问过用户。
+
+【命令】本机 ImageMagick 在 `D:\Environment\Scoop\apps\imagemagick\current\magick.exe`（**7.1.2-31 Q16-HDRI**）。批量：
+`magick <in>.hdr -filter triangle -resize 1600x800 <out>.hdr`
+`-resize WxH` 是"装入该框、保持比例、只缩不放"，所以已是目标尺寸的图不会被放大，2:1 的源正好落成 1600×800。
+
+【动态范围验证（关键）】对比原图与压缩图的 `mean`/`max`：石林 mean 38446→38319、max 497656→495608；灯光室-2 与 灯光室-白-黑 的 **max 完全一致**（60927.1 / 68095）。mean 的微小下降是降采样的正常平滑；max 基本不变即证明**没有截断、也没有 ringing**。
+
+【顺带查清】`src/` 里**没有任何代码引用 `assets/`**（grep 无匹配），所以该目录是纯源素材，**不会进应用也不会进安装包**。若要把这些 HDR 用到应用里（例如做内置环境贴图预设），必须另放到 `public/`（原样复制进 dist）或 `src/assets/`（走 vite 处理）。
+
+【待用户决定】① 是否用压缩版替换原文件（替换后 `assets/hdr/` 下即 1600×800 版本，原图不再保留）；② 是否要把它们接进应用作为环境贴图来源。
+- [2026-10-05 09:42] [工作记录] 应用图标已用新源图重新生成（未提交）：RMSE=0 验证嵌入成功；productName 已改为 ModelViewer；assets/hdr 119MB 待决定 — model-viewer 应用图标已用新源图重新生成完成（**图标相关改动尚未提交**）。
+
+【做了什么】源图 `assets/Icon.png` 已被用户更新为 2048×2048 / 8-bit TrueColorAlpha / 3.4 MB 的新图。执行 `pnpm tauri icon assets/Icon.png` → `src-tauri/icons/` **17 个文件**；随后按既有流程收尾：① 删掉 `android/` 与 `ios/`（`tauri icon` 默认连移动端一起生成）；② `src-tauri/icons/64x64.png` → `public/favicon.png`；③ `touch src-tauri/build.rs` 后 `cargo build`（28.9 s，**不 touch 的话 tauri-build 不会重编译，资源会停在旧图标**）。
+
+【客观验证（比肉眼比对更硬）】用 .NET `ExtractAssociatedIcon` 从 `src-tauri/target/debug/model-viewer.exe` 抠出图标，与新生成的 `src-tauri/icons/32x32.png` 做 RMSE 比对：**RMSE = 0（完全一致）** —— 证明新图标确实嵌进了 exe，避开了"不重编译"那个坑。favicon 与新源图缩放的 RMSE = 1.6%（`tauri icon` 与 magick 缩放算法差异，属正常）。`bundle.windows.nsis.installerIcon/uninstallerIcon` 早已配好，所以**下次 `pnpm tauri build` 时安装包图标会自动更新**（本轮未跑打包做端到端验证）。
+
+【状态变更（用户采纳了上一轮的方案 A）】`src-tauri/tauri.conf.json` 的 **`productName` 已由 `三维模型查看器` 改为 `ModelViewer`**。影响：安装目录与安装包文件名变英文（`%LOCALAPPDATA%\ModelViewer\`、`ModelViewer_0.1.0_x64-setup.exe`）；**开始菜单快捷方式名与「设置 → 应用」里的显示名也跟着变英文**；窗口标题由 `app.windows[].title` 独立控制，**保持中文不受影响**；旧目录 `%LOCALAPPDATA%\三维模型查看器\` 会残留，需手动卸载一次。
+
+【待用户决定（本轮结束时仍未定）】① **`assets/hdr/` 共 119.2 MB 且全部 untracked**（8 张原图 97 MB + 我上一轮生成的 `1600x800/` 22 MB）—— 直接提交会把 119 MB 塞进仓库，需先决定：加 `.gitignore` 排除 / 只提交压缩版 / 都提交；② `public/favicon.svg` 已确认**不被任何文件引用**（Vite 模板遗留），可删；③ 是否跑一次 `pnpm tauri build` 对安装包图标做端到端验证；④ 图标相关改动是否现在提交。
+- [2026-10-05 09:57] [工作记录] 8 张全景 HDR 内置进应用（未提交）：新来源 builtin 复用 imported 的纹理路径，public/hdr 22.2MB 进安装包 + §45 — model-viewer 把 8 张全景 HDR **内置进应用**（**尚未 git 提交**，与图标改动同批待提交）。
+
+【交付】新环境来源 `builtin`，位置在光照面板「来源」（影棚 / 渐变 / **内置** / 导入 / 无），选中后用下拉挑具体那张。
+- 资源：`public/hdr/` 共 8 个文件 **22.2 MB**（vite 原样复制进 `dist`，不打进 JS bundle）；**dist/hdr 实测 8 files / 22.2 MB**，确认真的进了产物。
+- 文件名用 **ASCII**（`studio-1.hdr`、`mountain.hdr`、`stone-forest.hdr`…），界面显示中文（灯光室 1 / 山地 / 石林）—— 把"技术标识"与"用户可见名"分开。理由：运行时经 URL 取，非 ASCII 路径在自定义协议与子路径部署下都出过问题。
+- 清单与工具函数：新增 `src/constants/builtinEnvironments.js`（`id` 持久化 / `label` 中文 / `file`；`resolveBuiltinEnvironment`、`builtinEnvironmentLabel`、`builtinEnvironmentUrl`，后者用 `document.baseURI` 拼**绝对** URL，与解码器路径同一套理由）。
+
+【关键设计】内置与用户导入在**后续处理上完全相同**（读文件 → `registerImportedTexture` → PMREM），因此只抽出"URL 从哪来"这一层：
+- `environment.js` 新增 `resolveEnvironmentTextureUrl(environment)`（imported 取 customHdrUrl / builtin 按 id 推导）与 `environmentTextureName(environment)`；
+- `resolveEnvironmentPlan` 把两者归为一类（`needsTexture`），`kind` 仍复用 `imported`，**缓存键前缀由 `imported|` 改为 `texture|`**（共用同一条缓存路径）；
+- `ViewerEngine` 方法改名：`needsImportedEnvironment` → `needsEnvironmentTexture`、`loadImportedEnvironment` → `loadEnvironmentTexture`；
+- 但**类型没有硬塞**：内置是应用资源，不需要 asset 协议重新授权、也没有数据目录副本路径，故用独立字段 `environment.builtinId`，避免 `degradeStaleImportedEnvironment` 那类"按来源类型判断"的逻辑变别扭。
+
+【UI】`LightingPanel` 的「来源」加内置按钮（五个选项在 340px 侧栏排不下 → CSS `flex-wrap`），并加内置下拉；`onSourceChange` 在切到内置而此前未选过时补默认 id（否则 builtinId 为空会让引擎找不到贴图、界面出现空选择框）。
+
+【体积（已向用户确认并获接受）】安装包 4.29 MB → 约 **23 MB**（+22.2 MB 资源；NSIS 的 LZMA 对已 RLE 压缩的 HDR 再压有限）；`dist/` ~5 MB → ~27 MB。
+
+【验证】vitest **512/512（44 文件）**、`scripts/diagnose-sfc.cjs` 15/15、`pnpm build` 成功。新增 `builtinEnvironments.test.js`（8 例）+ `environment.test.js` 补内置路径（已登记→复用 imported 且键随 id 变；未加载完 / id 已失效→退化渐变并标 fellBack，保证不黑屏）。未跑 cargo test（零 Rust 改动）。文档见 §45。
+
+【最该真机确认的一条】**Tauri 下 `/hdr/*.hdr` 能否取到** —— 服务 `public/` 静态资源的方式与 dev 服务器不同，这是 ASCII 文件名想规避但必须实测的风险点。另附：8 张图观感、五按钮换行排版、存为主题后重启能否恢复。
+
+【遗留待定】`assets/hdr/` 共 **119.2 MB 且全部未被 git 跟踪**（97 MB 原图 + 22 MB 我生成的 `1600x800/`）；它**不需要入库**（内置用的是 `public/hdr/` 那份），建议加 `.gitignore`，但属版本控制策略，等用户确认。另：图标改动（已重新生成、RMSE=0 验证嵌入）与本轮同批未提交。
+- [2026-10-05 10:05] [工作记录] 修复内置切换不起作用（未提交）：调用点只看 customHdrUrl 导致内置永远退化渐变；改参数为回调 + 两条护栏 + §45.7 — model-viewer 修复"光照面板切「内置」不起作用"（**尚未 git 提交**，与图标 + 内置 HDR 同批）。
+
+【现象】用户实测：切到「内置」并选中一张全景图后，环境没有任何变化。
+
+【根因（我的实现疏漏，与 Tauri 取文件无关）】`EnvironmentManager.apply` 判断"目标贴图是否已登记"时只看一个字段：
+```js
+resolveEnvironmentPlan(environment, {
+  importedReady: this.hasImportedTexture(environment.customHdrUrl),   // ← 只看 customHdrUrl
+})
+```
+而**内置来源没有 `customHdrUrl`**（为 `null`）→ 永远 `importedReady = false` → `resolveEnvironmentPlan` 每次都返回"退化为渐变" → **切了等于没切**。上一轮"复用导入那条路径"的方向是对的（见 d5838c434600），漏的是**调用点**没有跟着换成统一解析出的 URL。文档 §45.7。
+
+【修法：不止改一行】第一版在调用点改成 `this.hasImportedTexture(resolveEnvironmentTextureUrl(environment))` —— 能用，但那等于**又把"用哪个 URL 去问"交给调用方**，保留了下一次写错的机会。最终把 `resolveEnvironmentPlan` 的参数由**布尔值换成回调**：
+`{ importedReady: <boolean> }` → `{ hasTexture: (url) => boolean }`。
+理由：**该函数内部本来就已经算出 `textureUrl`**（靠 `resolveEnvironmentTextureUrl` 推出），让调用方再解析一遍是重复知识、必然可能不一致。收敛后"用哪个 URL 判断"只有一个答案。
+
+【护栏】`environment.test.js` 新增两条**照 bug 写的**用例：① 内置来源必须拿**推导出的** URL 去查询（断言查询参数匹配 `/hdr/mountain.hdr$`），而不是那个不存在的 `customHdrUrl`；② 推不出 URL 时**不应发起查询**（避免拿 `null` 去问）。—— 关键手法：**断言"传给依赖的中间输入"而不只是最终结果**，否则这类 bug 测不出来。
+
+【验证】vitest **514/514（44 文件）**、`scripts/diagnose-sfc.cjs` 15/15、`pnpm build` 成功。未跑 cargo test（零 Rust 改动）。
+
+【待用户重试】重启 `pnpm tauri dev` 后切「内置」。若**仍不生效**，则落到 §45.5 列出的那个风险点：`tauri.localhost` 服务 `public/` 静态资源的方式（需看 devtools 里 `/hdr/*.hdr` 是否 404）。`app.windows[].devtools` 是开着的，可让用户看控制台。
+
+【提交状态】累积**三批**未提交：图标重新生成（RMSE=0 已验证嵌入）、8 张 HDR 内置、本次修复。另 `assets/hdr/` 119.2 MB 仍未被 git 跟踪、建议 `.gitignore`（等用户确认）。
+- [2026-10-05 10:16] [工作记录] 内置环境贴图第二处缺陷已修（未提交）：取纹理也误用 customHdrUrl 导致 scene.environment=null；改由 plan 携带 textureUrl + 可见条件清单 — model-viewer 内置环境贴图**第二处缺陷已修**（**尚未 git 提交**，与图标 + 内置 HDR + 上一轮修复同批）。
+
+【根因（第二处，也是"完全没生效"的真正原因）】`src/core/three/environment.js:226` 取纹理时同样误用了 `customHdrUrl`：
+```js
+this.currentTexture = this.generateFromImported(environment.customHdrUrl)   // 内置来源这里是 null
+```
+→ `generateFromImported(null)` 查不到 → 返回 `null` → `scene.environment = null`。上一轮只修了"要不要用贴图"的判断（`hasTexture`），漏了"去取哪张贴图"，于是**内置贴图从未被应用过** —— 表现不是"效果弱"，而是完全无效。
+
+【修法（彻底堵住"重复推导"）】让 `resolveEnvironmentPlan` 把它**内部已经算出的 URL 一并返回**：
+```js
+return { kind, cacheKey: `texture|${textureUrl}`, fellBack: false, textureUrl }
+```
+`apply` 改为 `this.generateFromImported(plan.textureUrl)`。这样调用方**没有机会**再解析一次。
+【护栏】`environment.test.js` 新增 2 条：① 需要贴图时 plan 必须带上可用的 `textureUrl`（内置的断言匹配 `/hdr/stone-forest.hdr$`）；② 退化为渐变时不带 `textureUrl`，调用方据此不会去取一张不存在的纹理。
+
+【验证】vitest **516/516（44 文件）**、`pnpm build` 成功。未跑 cargo test（零 Rust 改动）。**仍需用户在真机确认现象**（无法在此环境渲染验证）。
+
+【本轮调研产出：内置/导入环境贴图"什么情况下看得出效果"（已答复用户，供后续复用）】
+- ✅ **背景设为「环境贴图」**（显示面板 → 背景）→ 整幅全景图直接成为背景，**与模型材质无关，最直观**，也是推荐的验证入口
+- ✅ 模型是 glTF/GLB（PBR）且**金属度高** → 明显镜面反射
+- ✅ FBX（Phong）/ Lambert → 生效但弱于 PBR
+- △ **STL / PLY / OBJ**（项目默认黏土材质 `metalness: 0.1 / roughness: 0.65`）→ **很微弱**，环境贴图只贡献柔和间接光，几乎看不到反射
+- ❌ 着色模式 = 法线 / UV 棋盘格 / 仅线框（材质被换成 `MeshNormalMaterial` / `MeshBasicMaterial` / `LineBasicMaterial`，都不吃 `scene.environment`）
+- ❌ 光照面板的「环境贴图强度」= 0
+
+【若按上述路径仍无变化】则落到 §45.5 那个风险点：`tauri.localhost` 服务 `public/` 静态资源（`app.windows[].devtools` 已开，让用户看 `/hdr/*.hdr` 是否 404）。
+
+【提交状态】累积**四批**未提交：图标重新生成、8 张 HDR 内置、内置切换判断修复、本次取纹理修复。`assets/hdr/` 119.2 MB 仍未被 git 跟踪、建议 `.gitignore`（待用户确认）。
+- [2026-10-05 10:26] [工作记录] 修复切换内置全景图"偶发"不生效（未提交）：提前 return 使 lightingState 过期 + 晚到请求覆盖最新选择，两处同修 + §45.8 — model-viewer 修复"切换内置全景图**偶发**不生效"（**尚未 git 提交**，与图标 + 内置 HDR + 前两轮修复同批）。
+
+【现象】用户报告：切内置全景图时**偶发**切换后不起作用 —— 多数正常、偶尔没反应。（"偶发"这个词直接指向竞态。）
+
+【根因：两处缺陷叠加成一次覆盖】
+① `ModelCanvas.applyLightingSettings` 在"需要读文件"时**提前 `return`、没有调 `applyLighting`** → 引擎内部的 `this.lightingState` 停留在**旧值**；
+② `ViewerEngine.loadEnvironmentTexture` 加载完成后用的是 `this.applyLighting(this.lightingState)` —— 那个旧值。
+时序（连切两张）：
+```
+切到 A → 开始读 A（lightingState 未更新）→ return
+切到 B → 开始读 B（lightingState 仍未更新）→ return
+A 先读完 → applyLighting(旧状态) → 套用旧图
+B 读完   → applyLighting(旧状态) → 缓存键与 currentKey 相同且 currentTexture 非空 → 直接跳过
+```
+结果界面停在旧图上，**用户的选择始终没生效**。之所以"偶发"：只在"前一张读完之前又切了下一张"时触发，且后果取决于两次异步读取的**完成顺序**；慢慢切永远复现不出来。§45.8。
+
+【修法（两处，缺一不可）】
+① `ModelCanvas` 改成**先 `applyLighting(settings)`、再按需读文件**（去掉提前 return）→ `lightingState` 始终是最新选择；此刻贴图尚未登记，管线先退化为渐变，文件就绪后引擎自己切过去。
+② `ViewerEngine` 应用前用新增纯函数 `shouldApplyLoadedTexture(currentEnvironment, loadedUrl)`（放在 `environment.js`）判定 → **晚到的旧请求不再覆盖最新选择**，只登记进缓存、不应用（登记总是有益的，下次切回来即命中）。判定抽成纯函数是因为它就是"这条竞态"的可测表达形式。
+
+【护栏】`environment.test.js` 新增 4 条：读到的正是当前选中的 → 应用；已被切走 → 不应用；用户已切到非贴图来源 → 不应用；缺 URL / 缺当前环境 → 一律不应用（防御性）。
+
+【验证】vitest **520/520（44 文件）**、`scripts/diagnose-sfc.cjs` 15/15、`pnpm build` 成功。未跑 cargo test（零 Rust 改动）。
+
+【待用户复测】重启 `pnpm tauri dev` 后**快速连续切换几张内置图**（不等加载完就切下一张）—— 这是原来能复现的操作。控制台正常会打印 `环境贴图已就绪但用户已切换，暂不应用: xxx`（可据此确认竞态被拦住）。
+
+【提交状态】累积**五批**未提交：图标重新生成、8 张 HDR 内置、内置切换判断修复、取纹理修复、本次竞态修复。`assets/hdr/` 119.2 MB 仍未被 git 跟踪、建议 `.gitignore`（待用户确认）。
+- [2026-10-05 10:37] [工作记录] 跟随 three 上游弃用：RGBELoader → HDRLoader（未提交）：后者只是前者的包装，零风险替换 + 该警告反证链路已通 — model-viewer 跟随 three 上游弃用：`RGBELoader` → `HDRLoader`（**尚未 git 提交**，与前面几批同批）。
+
+【现象】控制台出现 `RGBELoader has been deprecated. Please use HDRLoader instead.`
+
+【根因（读源码确认，零风险替换）】three r180 起 `RGBELoader.js` 只剩一层包装：
+```js
+import { HDRLoader } from './HDRLoader.js';
+// @deprecated, r180
+class RGBELoader extends HDRLoader {
+  constructor( manager ) { console.warn( 'RGBELoader has been deprecated...' ); super( manager ); }
+}
+```
+即**唯一区别就是那条警告**，换成 `HDRLoader` 行为完全一致。
+
+【改动】`src/core/three/environment.js` 的 `loadEquirectangularTexture`：非 exr 分支改用 `import('three/addons/loaders/HDRLoader.js')` + `new HDRLoader().loadAsync(url)`（.exr 仍走 `EXRLoader`，本轮确认它**未**弃用 —— 它唯一那条 warn 是"跳过未知头部格式"的正常运行时提示）。`src/core/three/lighting.js` 里提到 RGBELoader 的注释同步更新。
+
+【验证】① `node -e "import('three/addons/loaders/HDRLoader.js')"` → 路径可解析、导出 `HDRLoader`（这类动态 import 不会被 build 静态校验，必须单独验）；② 全仓 grep 确认代码中无 `RGBELoader` 残留（仅注释里提及，用于说明替换原因）；③ vitest **520/520（44 文件）**、`pnpm build` 成功。未跑 cargo test（零 Rust 改动）。
+
+【一个有诊断价值的观察】**这条警告此前一直没出现，恰恰是因为内置贴图从未加载成功**（前两轮修的两个 bug 让 HDR 加载器从未被实例化）。所以它现在出现，反过来证明"文件真的读进来、加载器被构造了"——链路已通。（同类信号：某条日志/警告本该出现却没有，通常说明那段代码路径从未执行。）
+
+【提交状态】累积**六批**未提交：图标重新生成、8 张 HDR 内置、内置切换判断修复、取纹理修复、异步竞态修复、本次弃用跟随。`assets/hdr/` 119.2 MB 仍未被 git 跟踪、建议 `.gitignore`（待用户确认）。文档：本轮未单开章节，原因写在代码注释里（§45.7/§45.8 已覆盖前几轮）。
+- [2026-10-05 14:32] [工作记录] assets/hdr 已加入 .gitignore（未提交）：根锚定规则只命中它，public/hdr 内置资源仍会入库并已双向验证 — model-viewer 把 `assets/hdr/` 加入 `.gitignore`（**尚未 git 提交**）。
+
+【改动】`.gitignore` 新增一条（第 33 行）：
+```
+# HDR 全景原始素材 + 缩放中间产物（合计 ~119 MB，体积过大不入库）。
+# 注意：应用**内置**的是 public/hdr/ 下那份压缩版（8 张 / 22 MB），**那份必须入库** ——
+# 别因为名字相似把它一起忽略掉；本规则以根目录锚定，只命中 assets/hdr/。
+assets/hdr/
+```
+规则写成 `assets/hdr/`（带前导路径 + 结尾斜杠）：锚定仓库根、只匹配目录，因此不会命中 `public/hdr/`。**故意在 .gitignore 里写了那条警示注释** —— 两个名字太像，后人顺手加规则时很容易把内置资源一起忽略掉，而那种错误要到"安装包里没有环境贴图"才会暴露。
+
+【验证（三步，都做了）】
+1. `git check-ignore -v assets/hdr/` → `.gitignore:33:assets/hdr/  assets/hdr/`（确认命中，含规则行号）
+2. `git check-ignore -v public/hdr/studio-1.hdr` → **无输出、退出码 1** = 未被忽略 ✓（内置资源仍会入库）
+3. `git status --short` → 不再出现 `?? assets/hdr/`，而 `?? public/hdr/` 正常出现 ✓
+
+【待提交清单（七项，用户尚未决定是否提交）】① 图标用新源图重新生成（17 个 icons + favicon）；② 8 张 HDR 内置（`public/hdr/` 22.2 MB + `builtinEnvironments.js` + 代码接线）；③ 内置切换判断修复；④ 取纹理修复（`scene.environment` 被设成 null）；⑤ 异步竞态修复（偶发不生效）；⑥ `RGBELoader` → `HDRLoader`；⑦ 本次 `.gitignore`。**注意 `public/hdr/` 的 22.2 MB 必须入库，仓库体积会 +22 MB**（内置方案的固有代价，用户已确认接受）。
+
+【顺带确认】`assets/Icon.png`（图标源图的输入）不在忽略范围、仍会正常入库；它在本批中显示为 `M`（用户换了新图）。
 
 ## 经验教训 Lessons Learned
 
@@ -702,15 +877,127 @@ setCurrentNodeKey(key) {
 
 【2｜表达状态优先用组件库的 `type`/`variant`，不要自定义 CSS 去覆盖它的颜色】自定义 class 想改按钮颜色时，会与 Element Plus 的 `.el-button.is-text` 这类选择器**特异性打平甚至更低**，于是要么靠加载顺序碰运气、要么被迫加 `!important` 或堆选择器 —— 都是味道很差的修法。**改用组件自己的属性**（`:type="visible ? 'default' : 'info'"`）则：① 符合项目"复用 Element Plus 组件"的规范；② 颜色跟随主题变量自动适配明暗；③ 不必和库的样式特异性较劲。
 **适用范围**：任何基于组件库的主题色/状态色表达（按钮类型、标签类型、文字层级）。**例外**：库没有对应属性可表达时才回退到自定义样式，此时用足够特异性的选择器并写清理由。
-- [2026-10-03 17:57] [经验教训] 提交前核对暂存清单排除来源不明的配置改动；git push 是否需要放宽取决于当前会话文件策略 — model-viewer 提交推送时确认的两条操作经验：
+- [2026-10-03 17:57] [经验教训] 对"我没改过"的配置文件要**先验证再排除**（回退 .nvmrc 曾弄坏工具链）；git push 的放宽前提随会话策略变化 — model-viewer 项目里确认的两条操作经验（第 1 条是**修正过的结论**，含一次实际踩坑）：
 
-【1｜提交前必须核对暂存清单，主动排除无关/来源不明的改动】本次暂存时发现 `.nvmrc` 被从 `22.22.1` 改成 `22.23.3` —— **恰好等于当前机器的 node 版本**，而项目内既没有 `.npmrc` 也没有 pnpm 的 node 版本配置（`pnpm-workspace.yaml` 与 lockfile 里都没有），因此判断是环境写入的、与本次功能无关，`git checkout` 回退后未随提交（并在汇报里告知用户、给出"如需跟上请另开 chore 提交"的选项）。
-**做法**：`git add -A` 之后**先读一遍 `git status --short` 再 commit**，对"我没动过"的文件逐个用 `git diff <file>` 看内容；能判断来源无关就回退，判断不了就问用户 —— 不要因为"改得很小"就顺手带进去。配置文件（`.nvmrc` / `package.json` / CI 配置）被环境悄悄改写是最容易发生的一类。
-**适用范围**：任何"批量暂存再提交"的流程，尤其仓库里存在由工具维护的文件（记忆文件、锁文件、版本声明）。
+【1｜对"我没改过"的配置文件：先验证，再决定排除，别只凭推理回退】
+**踩坑经过**：提交前暂存时发现 `.nvmrc` 从 `22.22.1` 被改成 `22.23.3`（恰好等于当前机器的 node 版本），我据"项目内没有 `.npmrc` 也没有 pnpm 的 node 版本配置 + 我没动过它"判定为环境写入的无关改动，`git checkout` 回退并把它排除出提交 —— **结果回退后测试与构建全部失败**：`Node.js v22.22.1 is not installed or cannot be found`。因为 node 的版本包装器会按 `.nvmrc` 去找对应版本，而本机只装了 22.23.3。**那个改动是环境有意同步、必须保留的**，随后恢复并单独提交（`chore: 同步 .nvmrc 到当前 node 版本`）。
+**修正后的做法**：① 先 `git diff <file>` 看内容；② 对**可能是环境必需**的配置文件（`.nvmrc`、`.tool-versions`、锁文件、`package.json` 的 engines 等）**先回退、立刻跑一次基线命令**（测试或构建），用结果判断 —— 失败即说明它是必需的，改回来并如实提交；③ 只有确认回退无副作用才排除；④ 无论哪种处理，都在汇报里说明。
+**判断线索（当时推反的那一条）**："新值恰好等于当前环境的版本"**不是**"意外写入"的证据，反而很可能是"环境为了匹配运行时而同步"的证据。
+**适用范围**：任何"批量暂存再提交"的流程，尤其仓库里存在由工具维护的文件（版本声明、记忆文件、锁文件）。
 
-【2｜`git push` 的环境前提会随会话策略变化，先看当前策略再决定要不要请求放宽】本项目 push 走 ssh 会被 `sh.exe` 包装，在**受限沙箱**下报 `couldn't create signal pipe, Win32 error 5` 而失败，此前需 `sandbox_permissions: danger-full-access` 重试。但当会话的文件策略**已经是 danger-full-access** 时，直接 `git push` 即可成功，**不需要也不应该再请求升级**（若会话的审批策略是 never，这类请求会被自动拒绝）。
-**做法**：push 前先看运行时上下文里的 file policy；用 `GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20'` 预设选项避免交互卡住。成功后核对 `git status -sb` 显示 `main...origin/main` 无 ahead/behind。
+【2｜`git push` 的放宽前提随会话策略变化，先看当前策略再决定要不要请求】
+本项目 push 走 ssh 会被 `sh.exe` 包装，在**受限沙箱**下报 `couldn't create signal pipe, Win32 error 5` 而失败，此前需 `sandbox_permissions: danger-full-access` 重试。但当会话文件策略**已经是 danger-full-access** 时，直接 `git push` 即可成功，**不需要也不应再请求升级**（若审批策略是 never，这类请求会被自动拒绝）。
+**做法**：push 前先看运行时上下文里的 file policy；用 `GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20'` 预设选项避免交互卡住；成功后核对 `git status -sb` 显示 `main...origin/main` 无 ahead/behind。
 **适用范围**：本机（Windows + DSH 沙箱）的 git 远端操作；纯本地 git 命令（add/commit/log/status）从来不需要放宽。
+- [2026-10-05 09:10] [经验教训] Tauri 无安装目录名配置项：目录与安装包名都来自 productName（installMode 默认 currentUser）；NSIS 向导语言默认仅英文 — model-viewer 打包中文路径的调研结论（**已核对本地 `node_modules/@tauri-apps/cli/config.schema.json`，非凭印象；改动尚未实施，等用户选方案**）。
+
+【1｜Tauri 没有"安装目录名"或"安装包文件名"的配置项】`NsisConfig` 的全部可配项只有：`template, headerImage, sidebarImage, installerIcon, uninstallerIcon, uninstallerHeaderImage, installMode, languages, customLanguageFiles, displayLanguageSelector, compression, startMenuFolder, installerHooks, minimumWebview2Version`。顶层另有 `mainBinaryName`，但它**只改 exe 文件名**，不影响安装目录。
+
+【2｜两个中文都来自同一个字段】`productName`（当前 `三维模型查看器`）决定：① 安装包文件名 `三维模型查看器_0.1.0_x64-setup.exe`；② 安装目录名。另注 `installMode` **默认 `currentUser`**，所以实际装到 `%LOCALAPPDATA%\三维模型查看器\`，**不是** Program Files；改成 `perMachine` 才会变 `C:\Program Files\三维模型查看器\`。
+
+【3｜两条改法及取舍】
+- **方案 A（推荐）**：`productName` 改成 ASCII（如 `ModelViewer`）→ 安装包名与目录一并变英文。`app.windows[].title` 独立控制窗口标题，可保持中文不变。**代价**：开始菜单快捷方式名、以及「设置 → 应用 → 已安装的应用」里的显示名都跟着变英文；`startMenuFolder` 只能把快捷方式放进一个中文**文件夹**（多一层），改不了快捷方式本身的名字。
+- **方案 B**：只改目录、保留全部中文显示名 —— 用 `bundle.windows.nsis.template` 指向自定义 `installer.nsi`（从 Tauri 仓库对应版本复制，改 `InstallDir` 里的应用名）。**代价**：要跟随 Tauri 版本维护这份模板（官方模板变了得同步）。只在"显示名必须中文且目录必须英文"这个组合下才值得。
+
+【4｜附带发现（可能更值得注意）】`bundle.windows.nsis.languages` **默认 `["English"]`** —— 当前**安装向导界面是英文的**。想改中文需显式配 `"languages": ["SimpChinese", "English"]`。
+
+【5｜改 `productName` 的副作用】安装目录会变，旧的 `%LOCALAPPDATA%\三维模型查看器\` 会残留，需手动卸载一次；`identifier` 与数据目录（固定 `~/.model-viewer/app`）**不受影响**。
+
+【待用户决定】① 改文件名、安装目录、还是两者；② 应用显示名能否变英文（这是选 A 还是 B 的唯一分界）；③ 是否顺手把安装向导语言改中文。
+- [2026-10-05 09:38] [经验教训] 处理 HDR 素材：Pillow 读不了 RGBE；ImageMagick 必须 HDRI 构建；缩放禁用默认 Lanczos；用 mean/max 验证未截断 — 处理 Radiance HDR（.hdr / RGBE）图像素材时确认的六条结论，都在这轮实际踩过或验证过：
+
+【1｜Pillow **不支持** Radiance HDR】`Image.registered_extensions()` 里没有任何 hdr 扩展名。bundled Python 只带 Pillow（无 OpenCV/imageio），所以**别指望用 Python 直接缩 HDR**。可行工具：**ImageMagick**（本机已装）、OpenCV、imageio。先查 `magick` 是否可用，比急着装依赖划算。
+
+【2｜ImageMagick 必须是 **HDRI 构建**】用 `magick -version` 看是否为 `Q16-HDRI`。**普通 Q16 会把 HDR 的动态范围截断到整数**，环境贴图的高光直接毁掉。本项目机器上的是 `ImageMagick 7.1.2-31 Q16-HDRI` ✓。**适用范围**：任何浮点图像（.hdr/.exr，以及需要负值/超范围中间结果的合成）。
+
+【3｜缩放 HDR **不要用 ImageMagick 的默认滤镜**】默认是 Lanczos，会产生 overshoot（负值 / 超亮），在环境贴图上表现为异常亮点。改用无 ringing 的滤镜：`-filter triangle`（本轮采用）或 `box`/`Mitchell`。
+
+【4｜验证"动态范围没被截断"的方法】对比缩放前后的统计量：
+`magick identify -format "%f mean=%[mean] max=%[max] min=%[min]\n" <原图> <结果>`
+判据：**`max` 基本不变**即没截断（本轮两张图的 `max` 完全一致）；`mean` 轻微下降是降采样的正常平滑，不是问题；`max` 若掉到 1.0 量级则说明被归一化/截断了。
+
+【5｜Windows 上的 `convert` 不是 ImageMagick】`C:\Windows\system32\convert.exe` 是 NTFS 磁盘转换工具，**同名易误用**。ImageMagick 7 的命令行是 **`magick`**。
+
+【6｜尺寸用 `-resize WxH`，不要用 `WxH!`】`WxH` 是"装入该框、保持比例、只缩不放"——已是目标尺寸的图不会被放大，2:1 的等距柱状全景正好落成 1600×800。加 `!` 是强制拉伸，会破坏比例。另注：`-Y H +X W` 是 Radiance 头部的写法的**高在前**，读头部时别把宽高读反。
+- [2026-10-05 09:57] [经验教训] 新增资源来源：处理流程相同而前提条件不同时，复用流程但分开类型；复用会暴露缓存键语义变化（测试抓住正是好事） — model-viewer 给"新增一种资源来源"确认的可复用设计模式（内置全景图接进环境贴图系统时验证）：
+
+【1｜判据：处理流程相同、前提条件不同 → 复用流程，分开类型】内置贴图与用户导入的**后续处理完全一样**（读文件 → 登记纹理 → PMREM），但**前提条件不同**：内置是应用资源，不需要 asset 协议重新授权、也没有应用数据目录里的副本路径。
+- 于是**流程复用**：只抽出变化的那一层 —— `resolveEnvironmentTextureUrl(environment)`（imported 取 `customHdrUrl`、builtin 按 id 推导），其余读取/登记/PMREM 一行不改；
+- 但**类型不硬塞**：用独立的持久化字段 `builtinId`，而不是借 `customHdrUrl/customHdrPath` 造假数据。否则所有"按来源类型判断"的逻辑（如 `degradeStaleImportedEnvironment` 里"没有副本路径就退回渐变"）都会被迫加例外分支，越改越别扭。
+
+【2｜复用会暴露一处"可见成本"，那是好事】因为两条来源共用同一条纹理缓存，`resolveEnvironmentPlan` 的缓存键前缀必须从 `imported|` 改成 `texture|`（否则键名与实际语义不符）。这**直接导致一个既有单测失败**——这正是想要的效果：测试抓住了"共用缓存"这个语义变化，迫使作者显式确认它。**不要为了让旧测试变绿而保留名不副实的键名。**
+
+【3｜技术标识与用户可见名分层】随应用分发的静态文件用 **ASCII 文件名**（`stone-forest.hdr`），界面用清单里的**中文 label**（`石林`）。理由：文件名要经 URL/自定义协议层，非 ASCII 路径在这类环境里出过问题；而显示名完全可控，不该为技术限制牺牲可读性。清单里同时存 `id`（持久化用，改名等于破坏用户设置）与 `file`，职责分明。
+
+【4｜体积换功能的决策必须先量化再问】这类"内置大资源"的功能，代价是安装包直接变大（本例 4.29 MB → 约 23 MB，约 5 倍）。做法：**先算出前后数字、给出"全部内置 / 精选几张 / 只做入口"的选项让用户选**，再动手 —— 而不是先实现完再说"顺便它变大了"。
+
+**适用范围**：任何"给已有系统新增一种来源/后端/格式"的改造（导入 vs 内置、本地 vs 远端、程序化 vs 文件）。
+- [2026-10-05 10:06] [经验教训] 不要把函数内部已知的中间结果做成布尔值参数交给调用方（会重复推导且静默失效）；测试要断言"传给依赖的中间输入" — model-viewer 修掉一个静默功能失效后提炼的 API 设计教训（是对 d5838c434600"复用流程、分开类型"的**实践补充**，不是替代）：
+
+【1｜核心原则：纯函数内部已经算出的中间结果，不要以"算好的判断"（布尔值）形式再要求调用方提供】
+案例：`resolveEnvironmentPlan(environment, { importedReady })` —— 它**内部**就会用 `resolveEnvironmentTextureUrl(environment)` 推出目标 URL，却把"这个 URL 的贴图登记了没有"做成布尔值参数丢给调用方。调用方看不到那个中间 URL，只能**自己重新推导一遍**；结果 `EnvironmentManager.apply` 里只写了 `environment.customHdrUrl`，而内置来源该字段为 `null` → 永远 `importedReady = false` → 每次都退化渐变，用户看到的就是"切了没反应"。
+**修法**：把参数换成回调 `{ hasTexture: (url) => boolean }`，让纯函数用它自己算出的 URL 去问。收敛后"用哪个 URL 判断"只有一个答案，这类不一致在结构上消失。
+
+【2｜识别信号】当你发现**调用方需要重复计算被调函数内部已知的东西**（重新解析同一个 URL、重新推导同一个默认值、重新统计同一个集合），就说明这个参数设计错了 —— 应该把回调（或原始输入）传进去，而不是把算好的结论传进去。**"把结论传给函数"看似更简单，实则把知识复制到了调用方。**
+
+【3｜为什么这类 bug 是静默的】因为它走的是一条**合法的降级路径**：`importedReady=false` 是完全正常的状态（"贴图还没加载完"），函数据此正确退化为渐变、不抛错、不打日志。于是**配置错误伪装成了正常状态**。教训：**凡是"未准备好就降级"的设计，都要额外检查"判断自身是否可能永远为假"** —— 降级路径越优雅，它的失效越难察觉。
+
+【4｜测试护栏的写法：断言"传给依赖的中间输入"，而不只是最终结果】本轮补的两条用例是照 bug 写的：① 内置来源必须拿**推导出的** URL 去查询（断言回调收到的参数匹配 `/hdr/mountain.hdr$/`），而不是那个不存在的 `customHdrUrl`；② 推不出 URL 时**不应发起查询**（避免拿 `null` 去问）。只看 `kind`/`cacheKey` 的断言**测不出**这个 bug（退化后返回的也是合法值）；**必须断言"它用什么输入去问了谁"**。
+
+**适用范围**：任何"把状态/结论作为参数传给纯函数或工具函数"的地方，典型是缓存命中判断、能力探测结果、开关状态、依赖是否就绪。
+- [2026-10-05 10:16] [经验教训] 修"重复推导"bug 必须 grep 全部同类用法；three 的 scene.environment 对 Standard/Lambert/Phong 生效；"效果弱"与"没生效"要用无关观察点二分 — model-viewer 修"内置环境贴图不生效"时得到的三条可复用结论（第 1 条是对上一轮 41cdae30ac22 的必要补充）：
+
+【1｜修"重复推导"类 bug 时，必须 grep **全部**同类用法，而不是只修被发现的那一处】同一个文件里有两处犯同一个错：判断"贴图登记了没"用了 `environment.customHdrUrl`、取纹理也用了 `environment.customHdrUrl`。上一轮只修了前者并加了护栏，结果是**看起来修好了、功能却完全没生效**（后者把 `null` 传给生成函数，`scene.environment` 被设成 null）。用户反馈"还是不起作用"时才找到第二处。
+**做法**：定位到"某字段被误用"之后，立刻 `grep <该字段名>` 扫全仓，逐处判定它该不该换成统一解析的结果；**不要修完一处就认为完事**。这类"同一根因多处实例"的缺陷在重构（尤其"新增一种类型/来源"）时特别常见。
+
+【2｜three 的 `scene.environment` 对哪些材质生效（查源码确认，别凭印象）】`WebGLRenderer.js:2173`：
+```js
+materialProperties.environment = ( material.isMeshStandardMaterial || material.isMeshLambertMaterial || material.isMeshPhongMaterial ) ? scene.environment : null;
+```
+即 **Standard / Lambert / Phong 都自动生效**；`MeshBasicMaterial` / `MeshNormalMaterial` / `LineBasicMaterial` **不生效**。
+**差点出错**：我原本准备答复"FBX 的 Phong 材质不支持 scene.environment"，查了源码才发现是错的（Phong 支持）。**"某功能对哪些类型/变体生效"属于框架能力边界，必须读源码或官方实现，不能凭印象**（本项目已因此栽过不止一次）。
+
+【3｜"效果弱"与"完全没生效"必须分开判断 —— 找一个与可变因素无关的观察点做二分】用户说"感觉不起作用"时，先别急着修：本例里既可能是 bug（链路断），也可能是**物理上就弱**（默认黏土材质 `metalness: 0.1 / roughness: 0.65`，环境贴图只贡献柔和间接光，几乎没有可见反射）。
+**判别手法**：挑一个**绕开所有可变因素**的观察点来二分 —— 这里就是"**把背景设为环境贴图**"：它直接显示全景图本身，与模型材质、金属度、着色模式全都无关。若这一步能看到图 → 链路是通的，剩下的只是"效果强弱"问题；若看不到 → 才是链路/资源问题。**给用户排查建议时，优先给这种"一次就能分出方向"的验证步骤**，而不是罗列一堆可能原因。
+
+【适用范围】第 1 条适用于任何缺陷修复与重构；第 2 条适用于 three 材质与环境贴图相关的判断；第 3 条适用于任何"用户报告某功能没效果"的场景（渲染、动画、样式、快捷键）。
+- [2026-10-05 10:26] [经验教训] "偶发"先查竞态；异步路径上不要用提前 return 跳过状态同步；判定异步结果要比对"请求目标 vs 当前目标"；修好一层会露出下一层 — model-viewer 修掉一次"偶发切换失效"后提炼的四条可复用结论（异步竞态通用，不限于本项目）：
+
+【1｜"偶发"这个词本身就是线索：先按竞态查】**只在某些时机出问题、慢操作永远复现不了**，几乎总是竞态，而不是逻辑错误。本项目案例：用户连着切两张环境贴图 → 偶尔界面停在旧图上；**只要每张都等加载完再切，就永远复现不出来**。所以复现步骤要写"不等加载完就切下一张"。
+**适用范围**：任何"异步加载 + 用户可连续操作"的功能（图片/模型/路由/搜索建议/切换主题）。
+
+【2｜在异步路径上，不要用"提前 return"跳过状态同步】反面案例：调用方为了"等文件读完再应用"，在需要读文件时**直接 `return`、不更新引擎状态** —— 结果是**被调用方持有的状态停留在旧值**；等异步完成时，它拿旧状态去套用，于是**后完成的旧请求覆盖了用户最新的意图**。
+**正确做法**：无论要不要异步加载，**先把当前状态同步下去**（未就绪时走降级路径），等资源好了再由内部切过去。状态同步不该是"等条件满足才做"的事。
+
+【3｜判断"异步结果是否还该应用"，必须比对"请求时的目标 vs 当前的目标"】不能相信"谁最后完成谁赢"（那正是"晚期旧请求覆盖新选择"）。做法：应用前用当前状态重新解析出目标，与本次结果比对，不一致就**只缓存不应用**（缓存总是有益的 —— 下次切回来即命中，不浪费这次读取）。
+**实现建议**：把这个判定抽成**纯函数**（本项目即 `shouldApplyLoadedTexture(currentEnvironment, loadedUrl)`），因为它是这条竞态唯一可单测的表达形式；否则只能靠人工快速点击复现。
+
+【4｜修好一层缺陷后，要预期下一层会露出来】本例的时序缺陷**一直存在**，只是在"内置贴图完全不生效"那个 bug 修好之前，根本走不到"切换"这一步，所以无从暴露。**排查时不要把"刚修过的地方又出问题"当作修复无效** —— 先确认这次的失败模式是否与上次不同（这次是"多数正常偶尔失败"，上次是"从不生效"），往往说明修对了、只是更上层的缺陷现形了。
+- [2026-10-05 10:37] [经验教训] 弃用类可能只是新类的薄包装（读源码再换）；"本该出现的警告没出现"是强诊断信号；动态 import 路径构建不校验需单独验 — 处理"上游弃用警告"时确认的四条可复用结论：
+
+【1｜遇到弃用警告，先读被弃用的那个类本身，再决定替换风险】three 的常见做法是**保留旧名作为新类的薄包装**，只在构造函数打一条警告。本例 `RGBELoader` 全文就是 `class RGBELoader extends HDRLoader { constructor(m){ console.warn(...); super(m) } }` —— 唯一区别是那条警告，所以替换**行为完全一致、零风险**。（若旧类里还有真正的实现差异，就必须逐项比对 API 后再换。）
+**适用范围**：任何库的 `@deprecated` 类/函数/参数。**别凭"名字变了"就假设行为也变了**，也别因为"有警告"就以为要大改。
+
+【2｜"本该出现的日志/警告却没有出现"是强诊断信号：说明那段代码路径从未被执行】本例最有用的一条观察：`RGBELoader has been deprecated` 这条警告**此前一直没出现**，而它出现的时机恰好是——修好前面两个 bug、内置贴图**第一次真正开始加载**之后。于是这条警告反而成了"链路已通"的证据。
+**用法**：排查"功能没反应"时，可以主动问一句"这条路径上应该有什么日志/警告/网络请求？它出现了吗？"；**没有出现**往往比出现更能定位问题（说明根本没走到那里）。**适用范围**：渲染管线、异步加载、事件回调等一切"静默执行"的路径。
+
+【3｜跟随弃用时顺手检查兄弟模块，不要只改被报的那一个】同一个文件里 `EXRLoader` 与被弃用的 `RGBELoader` 是并列分支，替换时顺手确认了 `EXRLoader` **没有**弃用（它唯一那条 `console.warn` 是"跳过未知头部格式"的正常运行时提示，不是弃用）。**只修控制台报出来的那一个，会留下同类问题下次再报一遍**。
+
+【4｜动态 `import()` 的路径不会被构建静态校验，必须单独验证】本项目大量用 `await import('three/addons/loaders/xxx.js')` 做按需加载，而打包器**不会**（也无法）静态检查这类路径 —— 写错文件名时 `pnpm build` 照样成功，只在运行到那一行才失败。**做法**：改完用 `node -e "import('three/addons/loaders/HDRLoader.js').then(m => console.log(Object.keys(m)))"` 直接验一次路径与导出名。
+- [2026-10-05 14:33] [经验教训] 加 .gitignore 规则要双向验证（目标被忽略 + 相似路径未误伤），用 git check-ignore -v 看命中规则；相似命名是误伤高发区 — 给 `.gitignore` 加规则时的可复用手法（本轮通过 `assets/hdr/` 与 `public/hdr/` 这对高危相似路径验证）：
+
+【1｜加完规则必须**双向验证**：目标确实被忽略 + 相邻相似路径没被误伤】只验证"目标不出现了"是不够的 —— Git 的忽略是模式匹配，**容易连带命中你没打算忽略的路径**，而这类错误是**静默**的：文件从 `git status` 里消失、看起来"干净了"，直到很久以后"产物里少东西"（本例会是"安装包里没有环境贴图"）才暴露。
+**验证命令**（两条都要跑）：
+- 目标：`git check-ignore -v assets/hdr/` → 输出 `.gitignore:33:assets/hdr/  assets/hdr/`（**带规则行号**，能确认是哪条命中）
+- 相邻：`git check-ignore -v public/hdr/studio-1.hdr` → **应无输出且退出码为 1**（= 未被忽略）。用 `if ($LASTEXITCODE -ne 0)` 判成功，别把"无输出"当命令失败。
+
+【2｜相似命名是误伤高发区，规则要写得更精确】本例 `assets/hdr/`（原始素材，119 MB，该忽略）与 `public/hdr/`（应用内置资源，22 MB，**必须入库**）名字只差一级目录。做法：
+- 规则用 **`assets/hdr/`**（带前导路径 + **结尾斜杠**）：斜杠把它锚定到 `.gitignore` 所在目录且只匹配目录，避免 `**/assets/hdr` 这类宽松写法；
+- **在 `.gitignore` 里写注释说明为什么不能忽略那条相似路径** —— 忽略文件的维护者往往不是作者，一句注释能挡住一次误操作。
+
+【3｜"忽略掉了本该入库的东西"属于最难自查的一类错误】因为它不报错、不影响本地运行（文件还在磁盘上），只影响**别人 clone 之后的仓库**与**打包产物**。所以：① 对"只差一级目录/只差后缀"的路径组格外小心；② 用 `git status` 之外的手段（`check-ignore`）确认；③ 提交前顺带看一眼 `git status` 里"该出现的新目录出现了没有"（本例 `?? public/hdr/` 必须出现）。
+
+**适用范围**：任何 `.gitignore` / `.dockerignore` / `.npmignore` / 打包排除清单的修改。
 
 ## 行动指南 Action Guide
 

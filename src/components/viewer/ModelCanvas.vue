@@ -118,18 +118,25 @@ function applyLightingSettings() {
   if (!current) return
 
   const settings = lightingSettings.value
-  // 导入的 HDR/EXR 要先读文件并登记，才能被 applyLighting 生成 PMREM；
-  // 读取过程是异步的，成功后会由引擎自己重新套用光照（失败则退化为程序化环境）。
-  if (current.needsImportedEnvironment(settings.environment)) {
-    void current.loadImportedEnvironment(settings.environment).then((result) => {
+
+  /*
+   * **先把状态推给引擎，再按需读文件** —— 顺序很重要。
+   *
+   * 读文件是异步的，而 loadEnvironmentTexture 完成后会用引擎持有的 lightingState 重新套用光照。
+   * 若这里因为"要加载"就提前 return，引擎状态会一直停在旧值：用户连切两张时，先读完的那次
+   * 会用旧状态套用，把用户最新的选择覆盖掉（表现为"偶发切换不起作用"）。
+   * 先 apply 一次之后 `this.lightingState` 就始终是最新选择；此刻贴图尚未登记，管线会先退化为
+   * 渐变，等文件就绪再由引擎自己切过去。
+   */
+  current.applyLighting(settings)
+
+  if (current.needsEnvironmentTexture(settings.environment)) {
+    void current.loadEnvironmentTexture(settings.environment).then((result) => {
       if (!result.ok) {
         ElMessage.warning(`环境贴图读取失败（${result.error}），已改用程序化环境`)
       }
     })
-    return
   }
-
-  current.applyLighting(settings)
 }
 
 // 显示设置变化 → 引擎

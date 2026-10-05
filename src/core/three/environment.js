@@ -11,11 +11,16 @@
 import { Color, DataTexture, EquirectangularReflectionMapping, PMREMGenerator, RGBAFormat, FloatType } from 'three'
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 
+import {
+  builtinEnvironmentLabel,
+  builtinEnvironmentUrl,
+} from '../../constants/builtinEnvironments.js'
+
 export const GRADIENT_TEXTURE_SIZE = { width: 128, height: 64 }
 /** RoomEnvironment 的模糊量：0.04 是 three 官方示例的取值 */
 const ROOM_ENVIRONMENT_SIGMA = 0.04
 
-/** 程序化来源（不含 imported，它需要额外的加载状态判断） */
+/** 程序化来源（不含 imported / builtin，那两者需要额外的"文件是否已加载"判断） */
 const PROCEDURAL_SOURCES = ['gradient', 'room', 'none']
 
 function mixChannel(a, b, t) {
@@ -81,31 +86,91 @@ export function environmentCacheKey(environment = {}) {
 }
 
 /**
+ * 当前环境设置对应的贴图 URL（没有则 null）。
+ *
+ * 把两种"需要先去读文件"的来源统一起来：
+ * - `imported`：用户选的 HDR/EXR，URL 存在 `customHdrUrl`（桌面端 asset 协议 / Web 端 blob）
+ * - `builtin`：随应用分发的全景图，按 id 推导出应用内 URL
+ *
+ * 两者后续处理完全相同（读取 → 登记 → PMREM），区别只在 URL 从哪来。
+ */
+export function resolveEnvironmentTextureUrl(environment = {}) {
+  if (environment?.source === 'imported') return environment.customHdrUrl || null
+  if (environment?.source === 'builtin') return builtinEnvironmentUrl(environment.builtinId)
+  return null
+}
+
+/**
+ * 贴图**加载完成后**是否应该立刻应用它。
+ *
+ * 异步加载有天然竞态：用户连着切两张时，**先发起的请求可能后完成**。若它无条件套用，
+ * 就会用旧选择覆盖用户最新的选择 —— 表现为"偶发的切换没生效"，是否发生取决于完成顺序。
+ * 所以应用前必须确认"这一张仍是当前选中的那张"。
+ *
+ * 注意：**登记进缓存不受此限制**，登记总是有益的（下次切回来就是命中了），只是先不应用。
+ *
+ * @param {object} currentEnvironment 引擎当前持有的 environment（可能已被更新为最新选择）
+ * @param {string|null} loadedUrl 刚加载完成的贴图 URL
+ */
+export function shouldApplyLoadedTexture(currentEnvironment, loadedUrl) {
+  if (!loadedUrl) return false
+  return resolveEnvironmentTextureUrl(currentEnvironment) === loadedUrl
+}
+
+/**
+ * 环境贴图的展示名（日志与界面提示共用）。
+ * 内置的取清单里的中文标签，导入的取用户文件名；都取不到时回退到 id / 空串。
+ */
+export function environmentTextureName(environment = {}) {
+  if (environment?.source === 'builtin') {
+    return builtinEnvironmentLabel(environment.builtinId) || environment.builtinId || ''
+  }
+  return environment?.customHdrName || ''
+}
+
+/**
  * 决定这一帧实际要用哪种环境（纯函数，便于单测）。
  *
- * 关键点：**导入的贴图没准备好时必须退化为渐变**。它要经网络读取 + PMREM 转换，
+ * 关键点：**需要读文件的贴图没准备好时必须退化为渐变**。它要经网络读取 + PMREM 转换，
  * 是异步的；若此时让 scene.environment 保持为空，画面会直接变黑，
- * 用户看到的是"导入了 HDR 反而黑了"。
+ * 用户看到的是"选了 HDR 反而黑了"。
+ *
+ * `hasTexture` 设计成**回调**而不是布尔值：用哪个 URL 去问"登记了没有"是本函数的内部知识
+ * （它自己就是靠 `resolveEnvironmentTextureUrl` 推出的目标 URL）。早先这里收布尔值，
+ * 调用方得自己再解析一次 URL，结果只看了 `customHdrUrl`，内置来源（该字段为 null）
+ * 被永远当成"未准备好"，切了等于没切。
  *
  * @param {object} environment 光照状态里的 environment
- * @param {{importedReady?: boolean}} options 导入贴图是否已加载并登记
- * @returns {{kind: 'none'|'gradient'|'room'|'imported', cacheKey: string, fellBack: boolean}}
+ * @param {{hasTexture?: (url: string) => boolean}} options 查询某个 URL 的贴图是否已登记
+ * @returns {{kind: 'none'|'gradient'|'room'|'imported', cacheKey: string, fellBack: boolean,
+ *   textureUrl?: string|null}} 需要读文件时一并给出目标 URL，调用方不必重复解析
  */
-export function resolveEnvironmentPlan(environment = {}, { importedReady = false } = {}) {
+export function resolveEnvironmentPlan(environment = {}, { hasTexture = () => false } = {}) {
   const raw = environment.source ?? 'gradient'
+  /*
+   * `builtin` 与 `imported` 归为一类：两者的生成路径完全一样（都从"已登记的纹理"做 PMREM），
+   * 区别只在 URL 从哪来，所以这里统一判定，kind 依旧复用 `imported`。
+   */
+  const needsTexture = raw === 'imported' || raw === 'builtin'
   // 与 normalizeLightingState 的兜底保持一致：非法来源按渐变处理（防御性，正常路径到不了这里）
-  const requested = raw === 'imported' || PROCEDURAL_SOURCES.includes(raw) ? raw : 'gradient'
-  const canUseImported = requested === 'imported' && importedReady && Boolean(environment.customHdrUrl)
-  const kind = canUseImported ? 'imported' : requested === 'imported' ? 'gradient' : requested
+  const requested = needsTexture || PROCEDURAL_SOURCES.includes(raw) ? raw : 'gradient'
+
+  const textureUrl = needsTexture ? resolveEnvironmentTextureUrl(environment) : null
+  const canUseTexture = needsTexture && Boolean(textureUrl) && hasTexture(textureUrl)
+  const kind = canUseTexture ? 'imported' : needsTexture ? 'gradient' : requested
 
   if (kind === 'imported') {
-    // 缓存键用 URL：同一张 HDR 的不同强度不需要重新做 PMREM
-    return { kind, cacheKey: `imported|${environment.customHdrUrl}`, fellBack: false }
+    /*
+     * 缓存键用 URL：同一张贴图的不同强度不需要重新做 PMREM。
+     * **同时把 textureUrl 一并返回** —— 调用方（EnvironmentManager.apply）要拿它去取纹理；
+     * 若让调用方自己再解析一次，就会重演"只看 customHdrUrl、内置来源解析成 null"那个 bug。
+     */
+    return { kind, cacheKey: `texture|${textureUrl}`, fellBack: false, textureUrl }
   }
   return {
     kind,
     cacheKey: environmentCacheKey({ ...environment, source: kind }),
-    fellBack: requested === 'imported',
+    fellBack: needsTexture,
   }
 }
 
@@ -119,8 +184,13 @@ export async function loadEquirectangularTexture(url, { extension = 'hdr' } = {}
     const { EXRLoader } = await import('three/addons/loaders/EXRLoader.js')
     return new EXRLoader().loadAsync(url)
   }
-  const { RGBELoader } = await import('three/addons/loaders/RGBELoader.js')
-  return new RGBELoader().loadAsync(url)
+  /*
+   * 用 HDRLoader，不用旧的 RGBELoader：后者从 three r180 起只是 HDRLoader 的一层包装
+   * （唯一区别是构造函数里多打一条弃用警告 `RGBELoader has been deprecated`），
+   * 换过来行为完全一致，还省掉那条控制台噪音。
+   */
+  const { HDRLoader } = await import('three/addons/loaders/HDRLoader.js')
+  return new HDRLoader().loadAsync(url)
 }
 
 export class EnvironmentManager {
@@ -160,13 +230,13 @@ export class EnvironmentManager {
   /**
    * 应用环境设置（幂等）。
    * @param {{source: string, intensity: number, topColor: string, horizonColor: string,
-   *   bottomColor: string, customHdrUrl?: string}} environment
+   *   bottomColor: string, customHdrUrl?: string, builtinId?: string}} environment
    * @returns {object|null} 当前的环境贴图（供"环境贴图作为背景"使用）
    */
   apply(environment = {}) {
     const intensity = Number.isFinite(environment.intensity) ? environment.intensity : 1
     const plan = resolveEnvironmentPlan(environment, {
-      importedReady: this.hasImportedTexture(environment.customHdrUrl),
+      hasTexture: (url) => this.hasImportedTexture(url),
     })
 
     if (plan.kind === 'none') {
@@ -180,7 +250,8 @@ export class EnvironmentManager {
     if (this.currentKey !== plan.cacheKey || !this.currentTexture) {
       this.disposeTexture()
       if (plan.kind === 'imported') {
-        this.currentTexture = this.generateFromImported(environment.customHdrUrl)
+        // 用 plan 携带的 URL，**不要**在这里重新解析（内置来源没有 customHdrUrl，会被解析成 null）
+        this.currentTexture = this.generateFromImported(plan.textureUrl)
       } else {
         this.currentTexture =
           plan.kind === 'room' ? this.generateFromRoom() : this.generateFromGradient(environment)
